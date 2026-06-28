@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% block title %}Análisis · {{ a.codigo }}{% endblock %}
+{% block topbar_title %}📊 Bid Analyzer{% endblock %}
+{% block topbar_actions %}
+<a href="/licitaciones/{{ snap_id }}" class="btn btn-ghost btn-sm">← Detalle</a>
+<a href="/licitaciones/{{ snap_id }}/analizar/json?costo={{ costo_input }}" target="_blank" class="btn btn-ghost btn-sm">{ } JSON</a>
+{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+.vb{border-radius:var(--radius-lg);padding:18px 22px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px}
+.vb-p{background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.3)}
+.vb-e{background:var(--accent-dim);border:1px solid rgba(230,168,23,.3)}
+.vb-d{background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.3)}
+.vb-label{font-size:22px;font-weight:800}
+.vb-just{font-size:13px;color:var(--text-muted);max-width:560px;line-height:1.5;margin-top:6px}
+.vb-score{display:flex;flex-direction:column;align-items:center;background:rgba(0,0,0,.2);border-radius:var(--radius-lg);padding:12px 20px;text-align:center}
+.vb-num{font-family:var(--font-mono);font-size:36px;font-weight:800;line-height:1}
+.vb-lbl{font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);margin-top:4px}
+.sc-hi{color:var(--accent-2)}.sc-md{color:var(--accent)}.sc-lo{color:var(--danger)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.wide{grid-column:span 2}
+@media(max-width:800px){.grid2{grid-template-columns:1fr}.wide{grid-column:span 1}}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+.card-hdr{display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--surface-2);border-bottom:1px solid var(--border)}
+.card-title{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted)}
+.card-body{padding:16px}
+.precio-hero{text-align:center;padding:20px}
+.precio-num{font-family:var(--font-mono);font-size:30px;font-weight:800;color:var(--accent-2)}
+.precio-sub{font-size:12px;color:var(--text-muted);margin-top:4px}
+.price-range{display:flex;gap:0;margin-top:14px}
+.pr{flex:1;text-align:center;padding:9px 5px;border:1px solid var(--border)}
+.pr:first-child{border-radius:var(--radius) 0 0 var(--radius)}.pr:last-child{border-radius:0 var(--radius) var(--radius) 0}
+.pr.act{background:var(--accent-dim);border-color:var(--accent)}
+.pr-lbl{font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-dim);margin-bottom:3px}
+.pr-val{font-family:var(--font-mono);font-size:11px;font-weight:600}
+.metric-row{display:flex;align-items:center;justify-content:space-between;padding:9px 16px;border-bottom:1px solid var(--border)}
+.metric-row:last-child{border-bottom:none}
+.m-lbl{font-family:var(--font-mono);font-size:11px;color:var(--text-muted)}
+.m-val{font-family:var(--font-mono);font-size:12px;font-weight:600}
+.m-g{color:var(--accent-2)}.m-a{color:var(--accent)}.m-d{color:var(--danger)}
+.risk-hdr{display:flex;align-items:center;justify-content:space-between;padding:12px 16px}
+.risk-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:20px;font-family:var(--font-mono);font-size:11px;font-weight:700}
+.rb-bajo{background:rgba(63,185,80,.12);color:var(--accent-2);border:1px solid rgba(63,185,80,.2)}
+.rb-medio{background:var(--accent-dim);color:var(--accent);border:1px solid rgba(230,168,23,.2)}
+.rb-alto{background:rgba(248,81,73,.1);color:var(--danger);border:1px solid rgba(248,81,73,.2)}
+.rb-critico{background:rgba(248,81,73,.2);color:#ff6b6b;border:1px solid rgba(248,81,73,.4)}
+.risk-num{font-family:var(--font-mono);font-size:26px;font-weight:800}
+.factor{padding:9px 16px;border-top:1px solid var(--border);display:flex;align-items:flex-start;gap:9px}
+.factor-txt{flex:1}
+.factor-name{font-size:12px;font-weight:600;color:var(--text)}
+.factor-det{font-size:11px;color:var(--text-muted);margin-top:2px;line-height:1.4}
+.imp{flex-shrink:0;font-family:var(--font-mono);font-size:10px;padding:2px 7px;border-radius:10px}
+.imp-hi{background:rgba(248,81,73,.1);color:var(--danger)}.imp-md{background:var(--accent-dim);color:var(--accent)}.imp-lo{background:var(--surface-2);color:var(--text-muted)}
+.step{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid var(--border)}
+.step:last-child{border-bottom:none}
+.step-num{width:26px;height:26px;border-radius:50%;background:var(--accent-dim);border:1px solid var(--accent);display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0}
+.step-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px}
+.step-desc{font-size:12px;color:var(--text-muted);line-height:1.5}
+.step-val{font-family:var(--font-mono);color:var(--accent-2);font-size:12px;margin-top:4px}
+.costo-form{display:flex;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--border)}
+.costo-form input{background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);border-radius:var(--radius);padding:7px 10px;font-size:13px;font-family:var(--font-mono);outline:none;flex:1}
+.costo-form input:focus{border-color:var(--accent)}
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Veredicto -->
+{% set vc = 'vb-p' if 'Participar' in a.veredicto else ('vb-e' if 'Evaluar' in a.veredicto else 'vb-d') %}
+{% set sc = 'sc-hi' if a.score_oportunidad >= 65 else ('sc-md' if a.score_oportunidad >= 40 else 'sc-lo') %}
+<div style="font-size:14px;font-weight:700;color:var(--text-muted);margin-bottom:10px">{{ a.titulo or a.codigo }}</div>
+<div class="vb {{ vc }}">
+  <div><div class="vb-label">{{ a.veredicto }}</div><div class="vb-just">{{ a.justificacion }}</div></div>
+  <div class="vb-score"><div class="vb-num {{ sc }}">{{ a.score_oportunidad }}</div><div class="vb-lbl">Score / 100</div></div>
+</div>
+
+<div class="grid2">
+  <!-- Precio recomendado -->
+  <div class="card">
+    <div class="card-hdr"><span>💰</span><span class="card-title">Precio óptimo (Monte Carlo)</span>
+      <span style="margin-left:auto;font-family:var(--font-mono);font-size:10px;color:{% if a.precio.confianza=='alta' %}var(--accent-2){% elif a.precio.confianza=='media' %}var(--accent){% else %}var(--danger){% endif %}">
+        {{ a.precio.confianza }} (n={{ a.precio.n_muestra }})</span></div>
+    <div class="precio-hero">
+      <div style="font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);margin-bottom:5px">Precio óptimo de oferta</div>
+      <div class="precio-num">${{ "{:,.0f}".format(a.bid_optimo.precio_optimo) }}</div>
+      <div class="precio-sub">Margen {{ "{:.1%}".format(a.bid_optimo.margen_sugerido) }} · P(ganar) {{ "{:.0%}".format(a.bid_optimo.prob_ganar) }}</div>
+      <div class="price-range">
+        <div class="pr"><div class="pr-lbl">Estimado</div><div class="pr-val" style="color:var(--text-muted)">${{ "{:,.0f}".format(a.monto_estimado) if a.monto_estimado else '—' }}</div></div>
+        <div class="pr"><div class="pr-lbl">IC95 bajo</div><div class="pr-val" style="color:var(--info)">${{ "{:,.0f}".format(a.precio.ic_95_bajo) }}</div></div>
+        <div class="pr act"><div class="pr-lbl">Precio base</div><div class="pr-val" style="color:var(--accent)">${{ "{:,.0f}".format(a.precio.precio_base) }}</div></div>
+        <div class="pr"><div class="pr-lbl">IC95 alto</div><div class="pr-val" style="color:var(--danger)">${{ "{:,.0f}".format(a.precio.ic_95_alto) }}</div></div>
+      </div>
+    </div>
+    <form method="GET" class="costo-form">
+      <input type="number" name="costo" value="{{ costo_input }}" placeholder="Tu costo interno en CLP">
+      <button type="submit" class="btn btn-primary btn-sm">Recalcular</button>
+    </form>
+  </div>
+
+  <!-- Métricas -->
+  <div class="card">
+    <div class="card-hdr"><span>📊</span><span class="card-title">Métricas</span></div>
+    {% for lbl, val, cls in [
+      ('Ratio histórico adj/est', a.precio.ratio_historico, 'm-a'),
+      ('Muestras similares', a.precio.n_muestra, ''),
+      ('Precio mínimo (P10)', '$'~'{:,.0f}'.format(a.precio.precio_minimo), 'm-g'),
+      ('Precio máximo (P90)', '$'~'{:,.0f}'.format(a.precio.precio_maximo), 'm-d'),
+      ('Utilidad esperada E[U]', '$'~'{:,.0f}'.format(a.bid_optimo.utilidad_esperada), 'm-g'),
+      ('Organismo · licitaciones', a.organismo.total_licitaciones, ''),
+      ('Score pagador', (a.organismo.score_pagador|string)~'/100', 'm-g' if a.organismo.score_pagador >= 60 else ('m-a' if a.organismo.score_pagador >= 35 else 'm-d')),
+      ('Riesgo', (a.riesgo.score|string)~'/100 · '~a.riesgo.nivel, 'm-g' if a.riesgo.score < 25 else ('m-a' if a.riesgo.score < 50 else 'm-d')),
+    ] %}
+    <div class="metric-row"><span class="m-lbl">{{ lbl }}</span><span class="m-val {{ cls }}">{{ val }}</span></div>
+    {% endfor %}
+  </div>
+
+  <!-- Curva Monte Carlo -->
+  <div class="card wide">
+    <div class="card-hdr"><span>📈</span><span class="card-title">Curva precio vs utilidad esperada (Monte Carlo · 10,000 sim.)</span></div>
+    <div class="card-body"><div style="position:relative;height:220px"><canvas id="curvaChart"></canvas></div></div>
+  </div>
+
+  <!-- Risk -->
+  <div class="card">
+    <div class="card-hdr"><span>⚠️</span><span class="card-title">Evaluación de riesgo</span></div>
+    <div class="risk-hdr">
+      <span class="risk-badge rb-{{ a.riesgo.nivel }}">{{ {'bajo':'🟢','medio':'🟡','alto':'🔴','crítico':'🚨'}[a.riesgo.nivel] }} {{ a.riesgo.nivel }}</span>
+      <span class="risk-num {{ 'sc-hi' if a.riesgo.score < 25 else ('sc-md' if a.riesgo.score < 50 else 'sc-lo') }}">{{ a.riesgo.score }}</span>
+    </div>
+    {% for f in a.riesgo.factores %}
+    <div class="factor">
+      <span style="font-size:14px">{{ '🔴' if f.impacto >= 20 else ('🟡' if f.impacto >= 10 else '🟢') }}</span>
+      <div class="factor-txt"><div class="factor-name">{{ f.nombre }}</div>{% if f.detalle %}<div class="factor-det">{{ f.detalle }}</div>{% endif %}</div>
+      {% if f.impacto > 0 %}<span class="imp {{ 'imp-hi' if f.impacto >= 20 else ('imp-md' if f.impacto >= 10 else 'imp-lo') }}">+{{ f.impacto }}</span>{% endif %}
+    </div>
+    {% endfor %}
+    <div style="padding:10px 16px;font-size:12px;color:var(--text-muted);border-top:1px solid var(--border);line-height:1.5">{{ a.riesgo.recomendacion }}</div>
+  </div>
+
+  <!-- Organismo -->
+  <div class="card">
+    <div class="card-hdr"><span>🏛️</span><span class="card-title">Perfil organismo comprador</span></div>
+    {% for lbl, val in [('Organismo', a.organismo.nombre|truncate(40)),('Licitaciones en BD', a.organismo.total_licitaciones),('Monto promedio', ('$'~'{:,.0f}'.format(a.organismo.monto_promedio)) if a.organismo.monto_promedio else '—'),('Ratio adj. promedio', a.organismo.ratio_adj_promedio)] %}
+    <div class="metric-row"><span class="m-lbl">{{ lbl }}</span><span class="m-val" style="font-size:12px">{{ val }}</span></div>
+    {% endfor %}
+    <div style="padding:10px 16px 14px">
+      <div class="m-lbl" style="margin-bottom:5px">Score fiabilidad</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="flex:1;height:5px;border-radius:3px;background:var(--surface-2);overflow:hidden">
+          <div style="height:100%;border-radius:3px;width:{{ a.organismo.score_pagador }}%;background:{% if a.organismo.score_pagador >= 60 %}var(--accent-2){% elif a.organismo.score_pagador >= 35 %}var(--accent){% else %}var(--danger){% endif %}"></div>
+        </div>
+        <span class="m-val">{{ a.organismo.score_pagador }}/100</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Plan propuesta -->
+  <div class="card wide">
+    <div class="card-hdr"><span>📝</span><span class="card-title">Plan de propuesta — pasos recomendados</span></div>
+    <div class="card-body">
+      {% for n, title, desc, val in [
+        (1,'Precio de oferta','Precio que maximiza utilidad esperada según simulación Monte Carlo:','$'~'{:,.0f}'.format(a.bid_optimo.precio_optimo)~' CLP ('~'{:.1%}'.format(a.bid_optimo.margen_sugerido)~' margen · '~'{:.0%}'.format(a.bid_optimo.prob_ganar)~' P(ganar))'),
+        (2,'Verificar costo interno','Monto estimado: $'~('{:,.0f}'.format(a.monto_estimado) if a.monto_estimado else '—')~'. Si tu costo supera el '~'{:.0%}'.format(a.precio.ratio_historico)~' del estimado, la oportunidad pierde rentabilidad. Usa el formulario de arriba para recalcular.',''),
+        (3,'Revisar bases técnicas','Verifica garantías, plazo de entrega, experiencia mínima y formato de propuesta. Riesgo actual: '~a.riesgo.nivel~' ('~(a.riesgo.score|string)~'/100).',''),
+        (4,'Propuesta técnica diferenciadora','Metodología, equipo, experiencia en proyectos similares y plan de contingencia son decisivos para organismos con historial ('~(a.organismo.total_licitaciones|string)~' licitaciones en BD).',''),
+        (5,'Oferta económica final','Rango competitivo IC95%: $'~'{:,.0f}'.format(a.precio.ic_95_bajo)~' — $'~'{:,.0f}'.format(a.precio.ic_95_alto)~'. Precio óptimo recomendado:','$'~'{:,.0f}'.format(a.bid_optimo.precio_optimo)~' CLP'),
+      ] %}
+      <div class="step">
+        <div class="step-num">{{ n }}</div>
+        <div>
+          <div class="step-title">{{ title }}</div>
+          <div class="step-desc">{{ desc }}</div>
+          {% if val %}<div class="step-val">{{ val }}</div>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Similares -->
+  {% if a.similares %}
+  <div class="card wide">
+    <div class="card-hdr"><span>🔍</span><span class="card-title">Licitaciones similares en BD (referencia de precio)</span></div>
+    {% for s in a.similares %}
+    <div style="padding:9px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;font-size:12px">
+      <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);min-width:110px">{{ s.codigo }}</span>
+      <span style="flex:1;color:var(--text);overflow:hidden;white-space:nowrap;text-overflow:ellipsis">{{ s.titulo }}</span>
+      <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);margin:0 8px">{{ s.estado }}</span>
+      <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-2);white-space:nowrap">{% if s.monto %} ${{ "{:,.0f}".format(s.monto) }}{% else %}—{% endif %}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const curva = {{ curva_json | safe }};
+Chart.defaults.color='#8b949e'; Chart.defaults.borderColor='#21262d';
+Chart.defaults.font.family="'IBM Plex Mono',monospace"; Chart.defaults.font.size=10;
+const utilidad=curva.map(d=>d.utilidad), probWin=curva.map(d=>d.prob_win*100);
+const optIdx=utilidad.indexOf(Math.max(...utilidad));
+new Chart(document.getElementById('curvaChart').getContext('2d'),{
+  type:'bar',
+  data:{
+    labels:curva.map(d=>'$'+(d.precio/1e6).toFixed(2)+'M'),
+    datasets:[
+      {label:'Utilidad CLP',data:utilidad,
+       backgroundColor:curva.map((_,i)=>i===optIdx?'rgba(63,185,80,.8)':'rgba(230,168,23,.25)'),
+       borderColor:curva.map((_,i)=>i===optIdx?'#3fb950':'rgba(230,168,23,.5)'),
+       borderWidth:1,borderRadius:2,yAxisID:'y'},
+      {label:'P(ganar)%',data:probWin,type:'line',
+       borderColor:'#58a6ff',backgroundColor:'transparent',
+       borderWidth:2,pointRadius:0,tension:.4,yAxisID:'y2'},
+    ]
+  },
+  options:{responsive:true,maintainAspectRatio:false,
+    interaction:{mode:'index',intersect:false},
+    plugins:{legend:{labels:{usePointStyle:true,boxWidth:8}},
+      tooltip:{callbacks:{label:c=>c.datasetIndex===0?` $${c.parsed.y.toLocaleString('es-CL')}`:` ${c.parsed.y.toFixed(1)}%`}}},
+    scales:{
+      x:{grid:{color:'#21262d'},ticks:{maxTicksLimit:10,maxRotation:45}},
+      y:{grid:{color:'#21262d'},title:{display:true,text:'Utilidad (CLP)'}},
+      y2:{position:'right',grid:{display:false},title:{display:true,text:'P(ganar) %'},min:0,max:100}
+    }}
+});
+</script>
+{% endblock %}

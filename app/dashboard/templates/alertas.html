@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Alertas{% endblock %}
+{% block topbar_title %}Mis Alertas{% endblock %}
+{% block topbar_actions %}
+<a href="/alertas" class="btn btn-ghost btn-sm">↺ Limpiar filtros</a>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+.filters-bar{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);
+             padding:12px 16px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px}
+.fg{display:flex;flex-direction:column;gap:4px;min-width:140px;flex:1}
+.fg label{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted)}
+.fg select{background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);
+           border-radius:var(--radius);padding:7px 10px;font-size:12px;outline:none}
+.fg select:focus{border-color:var(--accent)}
+.table-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:12px}
+thead{background:var(--surface-2);border-bottom:1px solid var(--border)}
+th{padding:9px 14px;text-align:left;font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:rgba(255,255,255,.02)}
+.badge{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:4px;font-family:var(--font-mono);font-size:9px;font-weight:700;text-transform:uppercase}
+.badge-lic{background:var(--info-dim);color:var(--info);border:1px solid rgba(88,166,255,.2)}
+.badge-oc{background:var(--accent-dim);color:var(--accent);border:1px solid rgba(230,168,23,.2)}
+.badge-ca{background:var(--accent-2-dim);color:var(--accent-2);border:1px solid rgba(63,185,80,.2)}
+.monto{font-family:var(--font-mono);font-size:11px;color:var(--accent-2)}
+.t-null{font-family:var(--font-mono);font-size:10px;color:var(--text-dim)}
+.t-cod{font-family:var(--font-mono);font-size:10px;color:var(--text-dim)}
+.t-titulo{max-width:260px;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:1.4}
+.act-link{display:inline-flex;align-items:center;gap:3px;padding:3px 7px;border-radius:var(--radius);
+          border:1px solid transparent;text-decoration:none;font-family:var(--font-mono);font-size:10px;transition:all .15s}
+.act-link:hover{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
+.pager{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-top:1px solid var(--border);flex-wrap:wrap;gap:8px}
+.pager-info{font-family:var(--font-mono);font-size:11px;color:var(--text-muted)}
+.pager-links{display:flex;gap:3px}
+.pg{padding:4px 9px;border-radius:var(--radius);background:var(--surface-2);border:1px solid var(--border);
+    color:var(--text-muted);text-decoration:none;font-size:11px;font-family:var(--font-mono);transition:all .15s}
+.pg:hover,.pg.on{background:var(--accent-dim);color:var(--accent);border-color:var(--accent)}
+.pg.off{opacity:.3;pointer-events:none}
+</style>
+{% endblock %}
+
+{% block content %}
+<form method="GET" action="/alertas">
+<div class="filters-bar">
+  <div class="fg">
+    <label>Tipo</label>
+    <select name="tipo">
+      <option value="">Todos</option>
+      <option value="licitacion" {% if tipo_filtro=='licitacion' %}selected{% endif %}>Licitación</option>
+      <option value="orden_compra" {% if tipo_filtro=='orden_compra' %}selected{% endif %}>Orden de Compra</option>
+    </select>
+  </div>
+  <div class="fg">
+    <label>Regla</label>
+    <select name="regla">
+      <option value="">Todas</option>
+      {% for r in reglas_select %}
+      <option value="{{ r.id }}" {% if regla_filtro==r.id|string %}selected{% endif %}>{{ r.nombre|truncate(30) }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div style="display:flex;gap:6px;align-items:flex-end">
+    <button type="submit" class="btn btn-primary btn-sm">Filtrar</button>
+    <a href="/alertas" class="btn btn-ghost btn-sm">✕</a>
+  </div>
+</div>
+</form>
+
+<div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin-bottom:10px">
+  <strong style="color:var(--accent)">{{ total }}</strong> alertas totales
+</div>
+
+<div class="table-card">
+{% if alertas %}
+<div style="overflow-x:auto">
+<table>
+  <thead><tr>
+    <th>Tipo</th><th>Código</th><th>Título / Organismo</th>
+    <th>Región</th><th>Monto CLP</th><th>Regla</th>
+    <th>Fecha</th><th>Email</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for a in alertas %}
+  <tr>
+    <td><span class="badge {% if a.tipo=='licitacion' %}badge-lic{% elif a.tipo=='orden_compra' %}badge-oc{% else %}badge-ca{% endif %}">
+      {% if a.tipo=='licitacion' %}📄 Lic{% elif a.tipo=='orden_compra' %}🛒 OC{% else %}⚡ CA{% endif %}
+    </span></td>
+    <td><span class="t-cod">{{ a.codigo }}</span></td>
+    <td>
+      <div class="t-titulo">{{ a.titulo or '(sin título)' }}</div>
+      {% if a.organismo %}<div style="font-size:10px;color:var(--text-muted)">{{ a.organismo|truncate(40) }}</div>{% endif %}
+    </td>
+    <td>{% if a.region %}<span class="tag">R{{ a.region }}</span>{% else %}<span class="t-null">—</span>{% endif %}</td>
+    <td>{% if a.monto_clp %}<span class="monto">${{ "{:,.0f}".format(a.monto_clp) }}</span>{% else %}<span class="t-null">—</span>{% endif %}</td>
+    <td><span style="font-size:11px;color:var(--text-muted)">{{ a.regla_nombre|truncate(28) }}</span></td>
+    <td><span style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted)">{{ a.fecha_alerta.strftime('%d-%m-%Y') if a.fecha_alerta else '—' }}</span></td>
+    <td>
+      {% if a.enviado_email %}<span style="color:var(--accent-2);font-size:11px">✓</span>
+      {% else %}<span style="color:var(--text-dim);font-size:11px">–</span>{% endif %}
+    </td>
+    <td><a href="/alertas/{{ a.id }}" class="act-link" style="color:var(--accent)">Ver →</a></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if total_paginas > 1 %}
+<div class="pager">
+  <span class="pager-info">{{ (page-1)*per_page+1 }}–{{ [page*per_page,total]|min }} de {{ total }}</span>
+  <div class="pager-links">
+    <a href="?page={{ page-1 }}&tipo={{ tipo_filtro }}&regla={{ regla_filtro }}" class="pg {% if page==1 %}off{% endif %}">‹</a>
+    {% for p in range([1,page-2]|max,[total_paginas+1,page+3]|min) %}
+    <a href="?page={{ p }}&tipo={{ tipo_filtro }}&regla={{ regla_filtro }}" class="pg {% if p==page %}on{% endif %}">{{ p }}</a>
+    {% endfor %}
+    <a href="?page={{ page+1 }}&tipo={{ tipo_filtro }}&regla={{ regla_filtro }}" class="pg {% if page==total_paginas %}off{% endif %}">›</a>
+  </div>
+</div>
+{% endif %}
+{% else %}
+<div class="empty-state"><div class="empty-state-icon">🔕</div><h3>Sin alertas aún</h3>
+<p>Ejecuta una regla desde el dashboard o espera el ciclo diario de las 6 AM.</p></div>
+{% endif %}
+</div>
+{% endblock %}

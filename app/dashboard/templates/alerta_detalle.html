@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Alerta #{{ alerta.id }}{% endblock %}
+{% block topbar_title %}Detalle de alerta{% endblock %}
+{% block topbar_actions %}<a href="/alertas" class="btn btn-ghost btn-sm">← Alertas</a>{% endblock %}
+
+{% block content %}
+<div style="display:grid;grid-template-columns:1fr 280px;gap:18px;align-items:start">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
+    <div style="padding:18px 22px;background:var(--surface-2);border-bottom:1px solid var(--border)">
+      <div style="font-size:16px;font-weight:700">{{ alerta.datos.titulo or alerta.codigo }}</div>
+      <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin-top:4px">{{ alerta.codigo }}</div>
+    </div>
+    {% for label, val, cls in [
+      ('Monto CLP', '$'~'{:,.0f}'.format(alerta.datos.monto_clp) if alerta.datos.monto_clp else None, 'color:var(--accent-2);font-size:18px;font-weight:700'),
+      ('Estado', alerta.datos.estado, ''),
+      ('Organismo', alerta.datos.organismo, ''),
+      ('Región', ('R'~alerta.datos.region~' · '~(alerta.datos.nombre_region or '')) if alerta.datos.region else None, ''),
+      ('Publicación', alerta.datos.fecha_publicacion, 'font-family:var(--font-mono)'),
+      ('Cierre', alerta.datos.fecha_cierre, 'font-family:var(--font-mono)'),
+    ] %}
+    {% if val %}
+    <div style="display:flex;align-items:baseline;gap:14px;padding:11px 22px;border-bottom:1px solid var(--border)">
+      <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;min-width:110px">{{ label }}</span>
+      <span style="{{ cls }};font-size:13px">{{ val }}</span>
+    </div>
+    {% endif %}
+    {% endfor %}
+    {% if alerta.datos.link_detalle %}
+    <div style="padding:16px 22px">
+      <a href="{{ alerta.datos.link_detalle }}" target="_blank" class="btn btn-primary">🔗 Ver en Mercado Público</a>
+    </div>
+    {% endif %}
+    <details style="padding:0 22px 16px">
+      <summary style="cursor:pointer;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">▶ JSON completo</summary>
+      <pre style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);
+                 padding:12px;font-size:10px;font-family:var(--font-mono);color:var(--text-muted);
+                 white-space:pre-wrap;word-break:break-all;max-height:260px;overflow-y:auto;margin-top:10px">{{ alerta.datos|tojson(indent=2) }}</pre>
+    </details>
+  </div>
+  <div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:14px">
+      <div style="padding:10px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-size:11px;font-weight:700">📌 Metadata</div>
+      {% for l, v in [('ID', '#'~alerta.id), ('Regla', alerta.regla_nombre), ('Fecha', alerta.fecha_alerta.strftime('%d-%m-%Y %H:%M') if alerta.fecha_alerta else '—'), ('Email', '✓ Enviado' if alerta.enviado_email else '⏳ Pendiente')] %}
+      <div style="display:flex;flex-direction:column;gap:2px;padding:9px 14px;border-bottom:1px solid var(--border)">
+        <span style="font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-dim)">{{ l }}</span>
+        <span style="font-size:12px;color:var(--text)">{{ v }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      {% if alerta.datos.link_detalle %}<a href="{{ alerta.datos.link_detalle }}" target="_blank" class="btn btn-primary" style="text-align:center">Ver en Mercado Público</a>{% endif %}
+      <a href="/alertas" class="btn btn-ghost" style="text-align:center">← Volver</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

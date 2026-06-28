@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Mejorar plan{% endblock %}
+{% block topbar_title %}Planes y precios{% endblock %}
+
+{% block content %}
+<div style="max-width:700px;margin:0 auto">
+  <div style="text-align:center;margin-bottom:40px">
+    <h2 style="font-size:28px;font-weight:800;margin-bottom:10px">Elige tu plan</h2>
+    <p style="color:var(--text-muted)">Comienza gratis. Mejora cuando lo necesites.</p>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    {% for pid, plan in PLANES.items() %}
+    <div style="background:var(--surface);border:1px solid {% if pid=='pro' %}var(--accent){% else %}var(--border){% endif %};border-radius:14px;padding:28px;position:relative">
+      {% if pid == 'pro' %}
+      <div style="position:absolute;top:-12px;left:50%;transform:translateX(-50%);
+                  background:var(--accent);color:#1c1917;font-size:11px;font-weight:700;
+                  padding:3px 12px;border-radius:20px;white-space:nowrap">⭐ Recomendado</div>
+      {% endif %}
+      <div style="font-size:20px;font-weight:800;margin-bottom:6px">{{ plan.nombre }}</div>
+      <div style="font-family:var(--font-mono);font-size:36px;font-weight:700;color:var(--accent);margin-bottom:16px">
+        ${{ plan.precio }}<span style="font-size:14px;color:var(--text-muted)">/mes USD</span>
+      </div>
+      <ul style="list-style:none;margin-bottom:24px">
+        {% for f in plan.features %}
+        <li style="font-size:13px;color:var(--text-muted);padding:5px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+          <span style="color:var(--accent-2);font-weight:700">✓</span> {{ f }}
+        </li>
+        {% endfor %}
+        {% for l in plan.limitaciones %}
+        <li style="font-size:13px;color:var(--text-dim);padding:5px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+          <span>—</span> {{ l }}
+        </li>
+        {% endfor %}
+      </ul>
+      {% if current_user.plan == pid %}
+      <div class="btn btn-ghost" style="width:100%;text-align:center;cursor:default">Plan actual ✓</div>
+      {% else %}
+      <form method="POST" action="/upgrade/{{ pid }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn {{ 'btn-primary' if pid=='pro' else 'btn-ghost' }}" style="width:100%;justify-content:center">
+          {% if pid == 'pro' %}Mejorar a Pro →{% else %}Bajar a Free{% endif %}
+        </button>
+      </form>
+      {% if pid == 'pro' %}
+      <p style="text-align:center;font-size:11px;color:var(--text-dim);margin-top:10px">
+        Simulado — integrar Mercado Pago en producción
+      </p>
+      {% endif %}
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <div style="margin-top:30px;text-align:center">
+    <a href="/configuracion" class="link" style="font-size:13px">← Volver a configuración</a>
+  </div>
+</div>
+{% endblock %}

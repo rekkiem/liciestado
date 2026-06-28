@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block topbar_title %}Mis Reglas{% endblock %}
+{% block topbar_actions %}
+  {% if reglas|length < limite_reglas %}
+  <a href="/reglas/nueva" class="btn btn-primary btn-sm">+ Nueva regla</a>
+  {% else %}
+  <a href="/upgrade" class="btn btn-ghost btn-sm" title="Límite de reglas alcanzado">🔒 + Regla (Pro)</a>
+  {% endif %}
+{% endblock %}
+
+{% block extra_head %}
+<style>
+.home-grid{display:grid;grid-template-columns:1fr 340px;gap:20px;align-items:start}
+@media(max-width:900px){.home-grid{grid-template-columns:1fr}}
+
+.regla-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);
+            overflow:hidden;margin-bottom:12px;transition:border-color .2s}
+.regla-card:hover{border-color:var(--border-2)}
+.regla-header{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border)}
+.regla-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot-on{background:var(--accent-2);box-shadow:0 0 6px rgba(63,185,80,.5)}
+.dot-off{background:var(--border-2)}
+.regla-nombre{font-weight:700;font-size:14px;flex:1}
+.regla-tipo{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);
+            background:var(--surface-2);padding:2px 8px;border-radius:10px;border:1px solid var(--border)}
+.regla-body{padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.regla-filtros{flex:1;font-size:12px;color:var(--text-muted);line-height:1.5;min-width:0}
+.regla-email{font-family:var(--font-mono);font-size:10px;color:var(--text-dim)}
+.regla-actions{display:flex;gap:6px;flex-shrink:0}
+.regla-footer{padding:8px 16px;border-top:1px solid var(--border);
+              display:flex;align-items:center;justify-content:space-between;
+              font-size:11px;color:var(--text-dim);font-family:var(--font-mono)}
+
+.limit-bar{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px}
+.limit-track{flex:1;height:5px;background:var(--surface-2);border-radius:3px;overflow:hidden}
+.limit-fill{height:100%;border-radius:3px;background:var(--accent);transition:width .4s}
+.limit-fill.full{background:var(--danger)}
+
+/* Right sidebar */
+.sidebar-widget{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:14px}
+.widget-hdr{padding:12px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);
+            font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px}
+.alert-item{padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px}
+.alert-item:last-child{border-bottom:none}
+.alert-title{color:var(--text);overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1}
+.alert-meta{font-family:var(--font-mono);font-size:10px;color:var(--text-dim);margin-top:3px}
+.alert-monto{color:var(--accent-2);font-weight:600}
+
+.ticket-banner{background:rgba(230,168,23,.06);border:1px solid rgba(230,168,23,.25);
+               border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:18px;
+               display:flex;align-items:flex-start;gap:10px;font-size:13px}
+</style>
+{% endblock %}
+
+{% block content %}
+
+{% if not tiene_ticket %}
+<div class="ticket-banner">
+  <span style="font-size:18px">⚠️</span>
+  <div>
+    <strong style="color:var(--accent)">Configura tu ticket de API para activar las alertas.</strong><br>
+    <span style="color:var(--text-muted)">Sin el ticket, el scheduler no puede consultar Mercado Público.
+    <a href="/configuracion" class="link">Configurar ahora →</a></span>
+  </div>
+</div>
+{% endif %}
+
+<div class="home-grid">
+<div>
+
+  <!-- Límite de reglas -->
+  <div class="limit-bar">
+    <span style="font-size:12px;color:var(--text-muted)">Reglas: <strong style="color:var(--text)">{{ reglas|length }}</strong> / {{ limite_reglas if not es_pro else '∞' }}</span>
+    {% if not es_pro %}
+    <div class="limit-track">
+      <div class="limit-fill {% if reglas|length >= limite_reglas %}full{% endif %}"
+           style="width:{{ [reglas|length / limite_reglas * 100, 100]|min }}%"></div>
+    </div>
+    <a href="/upgrade" class="btn btn-ghost btn-sm">↑ Pro = ∞</a>
+    {% else %}
+    <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent-2)">Pro ilimitado ✓</span>
+    {% endif %}
+  </div>
+
+  <!-- Lista de reglas -->
+  {% if reglas %}
+    {% for r in reglas %}
+    <div class="regla-card">
+      <div class="regla-header">
+        <span class="regla-dot {{ 'dot-on' if r.activa else 'dot-off' }}"></span>
+        <span class="regla-nombre">{{ r.nombre }}</span>
+        <span class="regla-tipo">{{ r.tipo }}</span>
+        <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent-2);margin-left:4px">{{ r.n_alertas }} alertas</span>
+      </div>
+      <div class="regla-body">
+        <div class="regla-filtros">
+          <div>{{ r.filtros_desc or 'Sin filtros adicionales' }}</div>
+          <div class="regla-email">📧 {{ r.email }}</div>
+        </div>
+        <div class="regla-actions">
+          <form method="POST" action="/reglas/{{ r.id }}/run" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-ghost btn-sm" title="Ejecutar ahora" {% if not tiene_ticket %}disabled title="Configura tu ticket primero"{% endif %}>▶</button>
+          </form>
+          <a href="/reglas/{{ r.id }}/editar" class="btn btn-ghost btn-sm">✏️</a>
+          <form method="POST" action="/reglas/{{ r.id }}/toggle" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-ghost btn-sm" title="{{ 'Desactivar' if r.activa else 'Activar' }}">
+              {{ '⏸' if r.activa else '▶' }}
+            </button>
+          </form>
+          <form method="POST" action="/reglas/{{ r.id }}/eliminar" style="display:inline"
+                onsubmit="return confirm('¿Eliminar la regla «{{ r.nombre }}»?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-danger btn-sm">🗑</button>
+          </form>
+        </div>
+      </div>
+      <div class="regla-footer">
+        <span>Creada {{ r.fecha_creacion.strftime('%d-%m-%Y') if r.fecha_creacion else '—' }}</span>
+        <span>Última ejecución: {{ r.fecha_ult_exec.strftime('%d-%m-%Y %H:%M') if r.fecha_ult_exec else 'Nunca' }}</span>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-state-icon">🎯</div>
+    <h3>Aún no tienes reglas</h3>
+    <p>Crea tu primera regla para empezar a recibir alertas de licitaciones relevantes.<br>
+    <a href="/reglas/nueva" class="link" style="margin-top:8px;display:inline-block">+ Crear primera regla →</a></p>
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- Right sidebar -->
+<div>
+  <!-- Alertas recientes -->
+  <div class="sidebar-widget">
+    <div class="widget-hdr">🔔 Alertas recientes</div>
+    {% if alertas_recientes %}
+      {% for a in alertas_recientes %}
+      <div class="alert-item">
+        <div class="alert-title"><a href="/alertas/{{ a.id }}" class="link">{{ a.titulo }}</a></div>
+        <div class="alert-meta">
+          {{ a.regla_nombre | truncate(30) }} ·
+          {% if a.monto_clp %}<span class="alert-monto">${{ "{:,.0f}".format(a.monto_clp) }}</span>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+      <div style="padding:10px 14px;text-align:center">
+        <a href="/alertas" class="link" style="font-size:12px">Ver todas las alertas →</a>
+      </div>
+    {% else %}
+    <div style="padding:20px;text-align:center;font-size:12px;color:var(--text-dim)">
+      Sin alertas aún. Ejecuta una regla para empezar.
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Quick links -->
+  <div class="sidebar-widget">
+    <div class="widget-hdr">⚡ Acciones rápidas</div>
+    <div style="padding:12px;display:flex;flex-direction:column;gap:8px">
+      <a href="/licitaciones" class="btn btn-ghost" style="justify-content:flex-start;font-size:12px">📋 Ver licitaciones descargadas</a>
+      <a href="/configuracion" class="btn btn-ghost" style="justify-content:flex-start;font-size:12px">⚙️ Configurar ticket API</a>
+      {% if es_pro %}
+      <a href="/analytics" class="btn btn-ghost" style="justify-content:flex-start;font-size:12px">📊 Analytics Pro</a>
+      {% else %}
+      <a href="/upgrade" class="btn btn-ghost" style="justify-content:flex-start;font-size:12px;opacity:.7">⭐ Mejorar a Pro</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+</div>
+{% endblock %}

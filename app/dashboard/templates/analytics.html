@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block title %}Analytics{% endblock %}
+{% block topbar_title %}📊 Analytics{% endblock %}
+{% block topbar_actions %}
+<div style="display:flex;gap:8px;align-items:center">
+  <span style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">Período:</span>
+  {% for d,l in [(30,'30d'),(90,'90d'),(180,'180d')] %}
+  <button class="period-btn" data-dias="{{ d }}">{{ l }}</button>
+  {% endfor %}
+  <select id="tipoFilter" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:5px 8px;font-size:12px;outline:none">
+    <option value="">Todos</option>
+    <option value="licitacion">Licitaciones</option>
+    <option value="orden_compra">OC</option>
+  </select>
+</div>
+{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+@media(max-width:900px){.kpi-grid{grid-template-columns:repeat(2,1fr)}}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 18px;position:relative;overflow:hidden}
+.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.kpi.am::before{background:var(--accent)}.kpi.gn::before{background:var(--accent-2)}
+.kpi.bl::before{background:var(--info)}.kpi.pr::before{background:#a78bfa}
+.kpi-lbl{font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);margin-bottom:5px}
+.kpi-num{font-family:var(--font-mono);font-size:22px;font-weight:700;line-height:1}
+.kpi-sub{font-size:10px;color:var(--text-muted);margin-top:4px;font-family:var(--font-mono)}
+.kpi-num.am{color:var(--accent)}.kpi-num.gn{color:var(--accent-2)}.kpi-num.bl{color:var(--info)}.kpi-num.pr{color:#a78bfa}
+.charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.cw{grid-column:span 2}
+@media(max-width:860px){.charts-grid{grid-template-columns:1fr}.cw{grid-column:span 1}}
+.chart-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+.ch-hdr{display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--surface-2);border-bottom:1px solid var(--border)}
+.ch-title{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted)}
+.ch-body{padding:14px}
+.mini-table{width:100%;font-size:12px;border-collapse:collapse}
+.mini-table tr{border-bottom:1px solid var(--border)}.mini-table tr:last-child{border-bottom:none}
+.mini-table td{padding:7px 4px}
+.t-lbl{color:var(--text);font-size:12px}.t-num{font-family:var(--font-mono);color:var(--accent-2);text-align:right}
+.t-bar-td{width:80px}.bar-mini{height:4px;border-radius:2px;background:var(--accent);transition:width .4s}
+.skel{background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface-3) 50%,var(--surface-2) 75%);background-size:200%;animation:shim 1.5s infinite;border-radius:4px}
+@keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.skel-kpi{height:56px}.skel-ch{height:200px}
+.period-btn{padding:4px 10px;border-radius:var(--radius);background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);cursor:pointer;font-size:11px;font-family:var(--font-mono);transition:all .15s}
+.period-btn.active,.period-btn:hover{background:var(--accent-dim);color:var(--accent);border-color:var(--accent)}
+.nodata{text-align:center;padding:40px;color:var(--text-dim);font-family:var(--font-mono);font-size:12px}
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- KPIs -->
+<div class="kpi-grid" id="kpiGrid">
+  {% for c in ['am','gn','bl','pr'] %}<div class="kpi {{ c }}"><div class="skel skel-kpi"></div></div>{% endfor %}
+</div>
+
+<!-- Temporal wide -->
+<div class="charts-grid">
+  <div class="chart-card cw">
+    <div class="ch-hdr"><span>📈</span><span class="ch-title">Tendencia temporal — publicaciones y montos</span></div>
+    <div class="ch-body"><div style="position:relative;height:240px"><canvas id="chartTemporal"></canvas></div></div>
+  </div>
+</div>
+
+<!-- Categorías + Organismos -->
+<div class="charts-grid">
+  <div class="chart-card">
+    <div class="ch-hdr"><span>🏷️</span><span class="ch-title">Top categorías</span></div>
+    <div class="ch-body" id="catBody"><div class="skel skel-ch"></div></div>
+  </div>
+  <div class="chart-card">
+    <div class="ch-hdr"><span>🏛️</span><span class="ch-title">Top organismos</span></div>
+    <div class="ch-body" id="orgBody"><div class="skel skel-ch"></div></div>
+  </div>
+</div>
+
+<!-- Regional + Diario -->
+<div class="charts-grid">
+  <div class="chart-card">
+    <div class="ch-hdr"><span>🗺️</span><span class="ch-title">Distribución regional</span></div>
+    <div class="ch-body"><canvas id="chartRegional" style="max-height:240px"></canvas></div>
+  </div>
+  <div class="chart-card">
+    <div class="ch-hdr"><span>📅</span><span class="ch-title">Actividad diaria (30 días)</span></div>
+    <div class="ch-body"><canvas id="chartDiario" style="max-height:240px"></canvas></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const C={amber:'#e6a817',green:'#3fb950',blue:'#58a6ff',danger:'#f85149',muted:'#8b949e',border:'#21262d',text:'#c9d1d9'};
+Chart.defaults.color=C.muted; Chart.defaults.borderColor=C.border;
+Chart.defaults.font.family="'IBM Plex Mono',monospace"; Chart.defaults.font.size=10;
+let dias=30, tipo='', charts={};
+
+async function fx(url){const r=await fetch(url);if(!r.ok)throw new Error(r.status);return r.json();}
+function qp(x={}){const p=new URLSearchParams({dias,...(tipo?{tipo}:{}), ...x});return p.toString();}
+
+async function loadKPIs(){
+  const el=document.getElementById('kpiGrid');
+  try{
+    const d=await fx(`/api/analytics/resumen?${qp()}`);
+    const fm=n=>n?.toLocaleString('es-CL')?? '—';
+    const fmM=n=>n?`$${(n/1e9).toFixed(2)}B`:'—';
+    el.innerHTML=`
+      <div class="kpi am"><div class="kpi-lbl">Total publicaciones</div><div class="kpi-num am">${fm(d.total_entidades)}</div></div>
+      <div class="kpi gn"><div class="kpi-lbl">Monto total CLP</div><div class="kpi-num gn">${fmM(d.monto_total_clp)}</div><div class="kpi-sub">prom ${fmM(d.monto_promedio_clp)}</div></div>
+      <div class="kpi bl"><div class="kpi-lbl">Mis alertas</div><div class="kpi-num bl">${fm(d.total_alertas??0)}</div><div class="kpi-sub">${d.reglas_activas??0} reglas activas</div></div>
+      <div class="kpi pr"><div class="kpi-lbl">Organismos únicos</div><div class="kpi-num pr">${fm(d.organismos_unicos)}</div><div class="kpi-sub">${d.regiones_activas??0} regiones</div></div>`;
+  }catch(e){el.innerHTML=`<div style="color:var(--danger);font-size:12px;grid-column:span 4;padding:10px">Error: ${e.message}</div>`;}
+}
+
+async function loadTemporal(){
+  try{
+    const data=await fx(`/api/analytics/temporal?${qp()}`);
+    if(charts.temporal)charts.temporal.destroy();
+    const labels=data.map(d=>d.periodo??d.mes??'?');
+    const counts=data.map(d=>d.cantidad??0);
+    const montos=data.map(d=>(d.monto_total??0)/1e6);
+    charts.temporal=new Chart(document.getElementById('chartTemporal').getContext('2d'),{
+      type:'bar',data:{labels,datasets:[
+        {label:'Publicaciones',data:counts,backgroundColor:'rgba(230,168,23,.25)',borderColor:C.amber,borderWidth:1.5,borderRadius:3,yAxisID:'y'},
+        {label:'Monto (M CLP)',data:montos,type:'line',borderColor:C.green,backgroundColor:'transparent',borderWidth:2,pointRadius:0,tension:.3,yAxisID:'y2'}
+      ]},
+      options:{responsive:true,maintainAspectRatio:false,
+        interaction:{mode:'index',intersect:false},
+        plugins:{legend:{labels:{usePointStyle:true,boxWidth:8}}},
+        scales:{x:{grid:{color:C.border}},y:{grid:{color:C.border}},y2:{position:'right',grid:{display:false}}}}
+    });
+  }catch(e){console.error('temporal',e)}
+}
+
+function miniTable(data, labelKey, numKey, el, barColor='var(--accent)'){
+  if(!data.length){el.innerHTML='<div class="nodata">Sin datos</div>';return;}
+  const max=Math.max(...data.map(d=>d[numKey]??0))||1;
+  el.innerHTML=`<table class="mini-table"><tbody>${data.map(d=>`<tr>
+    <td class="t-lbl">${(d[labelKey]??'?').toString().slice(0,35)}</td>
+    <td class="t-bar-td"><div class="bar-mini" style="width:${((d[numKey]??0)/max*100).toFixed(0)}%;background:${barColor}"></div></td>
+    <td class="t-num">${(d[numKey]??0).toLocaleString('es-CL')}</td>
+  </tr>`).join('')}</tbody></table>`;
+}
+
+async function loadCategorias(){
+  const el=document.getElementById('catBody');
+  try{const d=await fx(`/api/analytics/categorias?${qp({limit:12})}`);miniTable(d,'nombre'||'categoria'||'codigo','cantidad',el);}
+  catch(e){el.innerHTML=`<div class="nodata">Error: ${e.message}</div>`;}
+}
+
+async function loadOrganismos(){
+  const el=document.getElementById('orgBody');
+  try{const d=await fx(`/api/analytics/organismos?${qp({limit:12})}`);miniTable(d,'organismo','cantidad',el,'var(--accent-2)');}
+  catch(e){el.innerHTML=`<div class="nodata">Error: ${e.message}</div>`;}
+}
+
+async function loadRegional(){
+  try{
+    const data=await fx(`/api/analytics/regional?${qp()}`);
+    if(charts.regional)charts.regional.destroy();
+    if(!data.length)return;
+    const colors=['#e6a817','#3fb950','#58a6ff','#f85149','#a78bfa','#fb923c','#34d399','#f472b6','#60a5fa','#fbbf24','#4ade80','#f87171'];
+    charts.regional=new Chart(document.getElementById('chartRegional').getContext('2d'),{
+      type:'doughnut',
+      data:{labels:data.map(d=>d.nombre_region??`R${d.region}`),
+            datasets:[{data:data.map(d=>d.cantidad??0),backgroundColor:colors.slice(0,data.length),borderWidth:0,hoverOffset:6}]},
+      options:{plugins:{legend:{position:'right',labels:{boxWidth:10,padding:10,font:{size:10}}}},cutout:'58%'}
+    });
+  }catch(e){console.error('regional',e)}
+}
+
+async function loadDiario(){
+  try{
+    const data=await fx(`/api/analytics/diario?dias=30`);
+    if(charts.diario)charts.diario.destroy();
+    if(!data.length)return;
+    charts.diario=new Chart(document.getElementById('chartDiario').getContext('2d'),{
+      type:'line',
+      data:{labels:data.map(d=>d.fecha??d.dia??'?'),
+            datasets:[{label:'Publicaciones',data:data.map(d=>d.cantidad??0),borderColor:C.blue,backgroundColor:'rgba(88,166,255,.08)',fill:true,borderWidth:2,pointRadius:0,tension:.3}]},
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false}},
+        scales:{x:{grid:{color:C.border},ticks:{maxTicksLimit:10}},y:{grid:{color:C.border},beginAtZero:true}}}
+    });
+  }catch(e){console.error('diario',e)}
+}
+
+async function loadAll(){await Promise.all([loadKPIs(),loadTemporal(),loadCategorias(),loadOrganismos(),loadRegional(),loadDiario()]);}
+
+document.querySelectorAll('.period-btn').forEach(btn=>{
+  if(btn.dataset.dias==='30')btn.classList.add('active');
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.period-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active'); dias=parseInt(btn.dataset.dias); loadAll();
+  });
+});
+document.getElementById('tipoFilter').addEventListener('change',e=>{tipo=e.target.value;loadAll();});
+loadAll();
+</script>
+{% endblock %}

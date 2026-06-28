@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Editar' if regla else 'Nueva' }} regla{% endblock %}
+{% block topbar_title %}{{ 'Editar regla' if regla else 'Nueva regla' }}{% endblock %}
+{% block topbar_actions %}<a href="/dashboard" class="btn btn-ghost btn-sm">← Dashboard</a>{% endblock %}
+
+{% block extra_head %}
+<style>
+.form-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;max-width:740px}
+.form-section{padding:20px 22px;border-bottom:1px solid var(--border)}
+.form-section:last-child{border-bottom:none}
+.section-title{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);margin-bottom:14px}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:11px;font-family:var(--font-mono);color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px}
+.field input,.field select,.field textarea{width:100%;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);border-radius:var(--radius);padding:9px 12px;font-size:13px;font-family:var(--font-ui);outline:none;transition:border-color .15s}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent)}
+.field textarea{font-family:var(--font-mono);font-size:12px;resize:vertical;min-height:120px}
+.hint{font-size:11px;color:var(--text-dim);margin-top:5px;line-height:1.5}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:600px){.grid-2{grid-template-columns:1fr}}
+.json-error{background:var(--danger-dim);border:1px solid rgba(248,81,73,.25);border-radius:var(--radius);padding:8px 12px;font-size:12px;color:var(--danger);margin-top:6px;display:none}
+.operadores-ref{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-top:10px;font-size:11px}
+.operadores-ref summary{cursor:pointer;color:var(--text-muted);font-family:var(--font-mono);margin-bottom:6px}
+.op-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px}
+.op-item{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);padding:3px 0;border-bottom:1px solid var(--border)}
+.op-key{color:var(--info)}
+.limit-error{background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.25);border-radius:var(--radius-lg);padding:20px;text-align:center}
+</style>
+{% endblock %}
+
+{% block content %}
+{% if error_limite %}
+<div class="limit-error">
+  <div style="font-size:24px;margin-bottom:10px">🔒</div>
+  <h3 style="font-size:16px;font-weight:700;margin-bottom:8px">Límite de reglas alcanzado</h3>
+  <p style="color:var(--text-muted);font-size:13px;margin-bottom:16px">El plan Free permite hasta 3 reglas. Mejora a Pro para reglas ilimitadas.</p>
+  <div style="display:flex;gap:10px;justify-content:center">
+    <a href="/upgrade" class="btn btn-primary">↑ Mejorar a Pro</a>
+    <a href="/dashboard" class="btn btn-ghost">Volver</a>
+  </div>
+</div>
+{% else %}
+<div class="form-card">
+<form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <div class="form-section">
+    <div class="section-title">Configuración básica</div>
+    <div class="grid-2">
+      <div class="field">
+        <label>Nombre de la regla *</label>
+        <input type="text" name="nombre_regla" value="{{ form_data.get('nombre','') }}" placeholder="Ej: Licitaciones TI en RM" required>
+      </div>
+      <div class="field">
+        <label>Tipo de entidad</label>
+        <select name="tipo_entidad">
+          <option value="licitacion" {% if form_data.get('tipo','licitacion')=='licitacion' %}selected{% endif %}>Licitación</option>
+          <option value="orden_compra" {% if form_data.get('tipo')=='orden_compra' %}selected{% endif %}>Orden de Compra</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>Email de destino</label>
+      <input type="email" name="email_destino" value="{{ form_data.get('email', current_user.email) }}" placeholder="tu@email.com">
+      <div class="hint">Las alertas se enviarán a este email. Por defecto tu email registrado.</div>
+    </div>
+    {% if regla %}
+    <div class="field">
+      <label>Estado</label>
+      <select name="activa">
+        <option value="1" {% if form_data.get('activa', True) %}selected{% endif %}>✅ Activa</option>
+        <option value="0" {% if not form_data.get('activa', True) %}selected{% endif %}>⏸ Inactiva</option>
+      </select>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="form-section">
+    <div class="section-title">Filtros (JSON)</div>
+    <div class="field">
+      <label>Criterios de filtrado</label>
+      <textarea name="filtros_json" id="filtrosJson" oninput="validateJson(this)">{{ form_data.get('filtros', {})|tojson(indent=2) }}</textarea>
+      <div class="json-error" id="jsonError">JSON inválido — revisa la sintaxis</div>
+      <div class="hint">Todos los criterios se combinan con AND lógico (todos deben cumplirse).</div>
+    </div>
+    <details class="operadores-ref">
+      <summary>📖 Referencia de operadores disponibles</summary>
+      <div class="op-grid">
+        <div class="op-item"><span class="op-key">region</span>: 13</div>
+        <div class="op-item"><span class="op-key">region_in</span>: [10, 14]</div>
+        <div class="op-item"><span class="op-key">monto_min</span>: 1000000</div>
+        <div class="op-item"><span class="op-key">monto_max</span>: 50000000</div>
+        <div class="op-item"><span class="op-key">titulo_contains</span>: "software"</div>
+        <div class="op-item"><span class="op-key">organismo_contains</span>: "MINSAL"</div>
+        <div class="op-item"><span class="op-key">estado</span>: "Publicada"</div>
+        <div class="op-item"><span class="op-key">estado_in</span>: ["Publicada","Adjudicada"]</div>
+        <div class="op-item"><span class="op-key">codigo_producto_in</span>: ["30200000"]</div>
+        <div class="op-item"><span class="op-key">descripcion_contains</span>: "consultoría"</div>
+      </div>
+      <div style="margin-top:10px;font-family:var(--font-mono);font-size:10px;color:var(--text-dim)">
+        Ejemplo completo:<br>
+        {"region":13,"titulo_contains":"software","monto_min":1000000,"estado":"Publicada"}
+      </div>
+    </details>
+  </div>
+
+  <div class="form-section" style="display:flex;gap:10px;justify-content:flex-end">
+    <a href="/dashboard" class="btn btn-ghost">Cancelar</a>
+    <button type="submit" class="btn btn-primary" id="submitBtn">
+      {{ '💾 Guardar cambios' if regla else '+ Crear regla' }}
+    </button>
+  </div>
+
+</form>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function validateJson(textarea) {
+  const errEl = document.getElementById('jsonError');
+  const btn = document.getElementById('submitBtn');
+  try {
+    JSON.parse(textarea.value || '{}');
+    errEl.style.display = 'none';
+    btn.disabled = false;
+  } catch(e) {
+    errEl.style.display = 'block';
+    btn.disabled = true;
+  }
+}
+// Format JSON on load
+const ta = document.getElementById('filtrosJson');
+if (ta) {
+  try {
+    const parsed = JSON.parse(ta.value || '{}');
+    ta.value = JSON.stringify(parsed, null, 2);
+  } catch(e) {}
+}
+</script>
+{% endblock %}

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Iniciar sesión — LiciEstado</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#07090f;--surface:#0d1117;--surface-2:#161b22;--border:#21262d;--border-2:#30363d;
+      --text:#e6edf3;--text-muted:#8b949e;--accent:#e6a817;--accent-dim:rgba(230,168,23,.10);
+      --accent-2:#3fb950;--danger:#f85149;--danger-dim:rgba(248,81,73,.10);
+      --font-ui:'Syne',system-ui;--font-mono:'IBM Plex Mono',monospace}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--font-ui);
+     min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;
+      width:100%;max-width:400px;padding:36px 32px}
+.logo{display:flex;align-items:center;gap:10px;margin-bottom:28px;justify-content:center}
+.logo-text{font-size:20px;font-weight:800}
+.logo-badge{font-size:9px;font-family:var(--font-mono);background:var(--accent-dim);
+            color:var(--accent);padding:2px 7px;border-radius:10px}
+h1{font-size:22px;font-weight:800;margin-bottom:6px;text-align:center}
+.subtitle{font-size:13px;color:var(--text-muted);text-align:center;margin-bottom:28px}
+.field{margin-bottom:16px}
+.field label{display:block;font-size:12px;font-family:var(--font-mono);color:var(--text-muted);
+             text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.field input{width:100%;background:var(--surface-2);border:1px solid var(--border-2);
+             color:var(--text);border-radius:8px;padding:10px 14px;font-size:14px;
+             font-family:var(--font-ui);outline:none;transition:border-color .15s}
+.field input:focus{border-color:var(--accent)}
+.field input::placeholder{color:var(--text-muted);opacity:.5}
+.btn-submit{width:100%;padding:11px;background:var(--accent);color:#1c1917;border:none;
+            border-radius:8px;font-size:14px;font-weight:700;font-family:var(--font-ui);
+            cursor:pointer;transition:opacity .15s;margin-top:8px}
+.btn-submit:hover{opacity:.88}
+.divider{text-align:center;color:var(--text-muted);font-size:12px;margin:20px 0;
+         position:relative}
+.divider::before,.divider::after{content:'';position:absolute;top:50%;width:42%;
+                                  height:1px;background:var(--border)}
+.divider::before{left:0}.divider::after{right:0}
+.link-row{text-align:center;font-size:13px;color:var(--text-muted)}
+.link-row a{color:var(--accent);font-weight:600}
+.flash{padding:10px 14px;border-radius:8px;margin-bottom:18px;font-size:13px;
+       display:flex;align-items:center;gap:8px}
+.flash-error{background:var(--danger-dim);border:1px solid rgba(248,81,73,.25);color:var(--danger)}
+.flash-success{background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.2);color:var(--accent-2)}
+.flash-info{background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.2);color:#58a6ff}
+.remember{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-muted);margin-top:4px}
+.remember input{width:auto}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <span style="font-size:24px">🏛</span>
+    <div class="logo-text">LiciEstado</div>
+    <span class="logo-badge">BETA</span>
+  </div>
+
+  <h1>Iniciar sesión</h1>
+  <p class="subtitle">Accede a tu plataforma de licitaciones</p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+  {% for cat, msg in messages %}
+  <div class="flash flash-{{ cat }}">
+    {{ '❌' if cat=='error' else ('✅' if cat=='success' else 'ℹ️') }} {{ msg }}
+  </div>
+  {% endfor %}
+  {% endwith %}
+
+  <form method="POST" action="/login">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="field">
+      <label>Email</label>
+      <input type="email" name="email" placeholder="tu@email.com" required autofocus>
+    </div>
+    <div class="field">
+      <label>Contraseña</label>
+      <input type="password" name="password" placeholder="••••••••" required>
+    </div>
+    <label class="remember">
+      <input type="checkbox" name="remember"> Recordarme
+    </label>
+    <button type="submit" class="btn-submit">Iniciar sesión →</button>
+  </form>
+
+  <div class="divider">o</div>
+  <div class="link-row">
+    ¿No tienes cuenta? <a href="/register">Regístrate gratis</a>
+  </div>
+  <div class="link-row" style="margin-top:8px">
+    <a href="/landing" style="color:var(--text-muted);font-size:12px">← Volver al inicio</a>
+  </div>
+</div>
+</body>
+</html>

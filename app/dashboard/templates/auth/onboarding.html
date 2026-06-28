@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Bienvenido a LiciEstado</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#07090f;--surface:#0d1117;--surface-2:#161b22;--border:#21262d;--border-2:#30363d;
+      --text:#e6edf3;--text-muted:#8b949e;--text-dim:#484f58;--accent:#e6a817;
+      --accent-dim:rgba(230,168,23,.10);--accent-2:#3fb950;--danger:#f85149;
+      --font-ui:'Syne',system-ui;--font-mono:'IBM Plex Mono',monospace}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--font-ui);
+     min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.wrap{width:100%;max-width:540px}
+.logo{text-align:center;margin-bottom:28px;font-size:18px;font-weight:800}
+.logo span{color:var(--accent)}
+
+/* Progress bar */
+.progress{display:flex;align-items:center;justify-content:center;gap:0;margin-bottom:32px}
+.step-dot{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+          font-family:var(--font-mono);font-size:12px;font-weight:700;border:2px solid var(--border);
+          background:var(--surface-2);color:var(--text-muted);transition:all .3s;flex-shrink:0}
+.step-dot.done{background:var(--accent-2);border-color:var(--accent-2);color:#0d1117}
+.step-dot.active{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
+.step-line{flex:1;height:2px;background:var(--border);max-width:60px}
+.step-line.done{background:var(--accent-2)}
+
+/* Cards */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:32px;margin-bottom:14px}
+.card-icon{font-size:36px;margin-bottom:16px;text-align:center}
+.card-title{font-size:20px;font-weight:800;text-align:center;margin-bottom:8px}
+.card-desc{font-size:13px;color:var(--text-muted);text-align:center;line-height:1.7;margin-bottom:24px}
+
+.field label{display:block;font-family:var(--font-mono);font-size:10px;text-transform:uppercase;
+             letter-spacing:.5px;color:var(--text-muted);margin-bottom:5px}
+.field input{width:100%;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);
+             border-radius:8px;padding:10px 14px;font-size:14px;font-family:var(--font-mono);
+             outline:none;transition:border-color .15s;margin-bottom:14px}
+.field input:focus{border-color:var(--accent)}
+.hint{font-size:11px;color:var(--text-dim);line-height:1.6;padding:10px 14px;
+      background:var(--surface-2);border-radius:6px;margin-bottom:16px}
+.hint a{color:var(--accent)}
+
+.btn-main{width:100%;padding:12px;background:var(--accent);color:#1c1917;border:none;
+          border-radius:8px;font-size:14px;font-weight:700;font-family:var(--font-ui);
+          cursor:pointer;transition:opacity .15s}
+.btn-main:hover{opacity:.88}
+.btn-skip{display:block;text-align:center;margin-top:12px;font-size:12px;color:var(--text-dim);
+          text-decoration:none;transition:color .15s}
+.btn-skip:hover{color:var(--text-muted)}
+
+/* Status */
+.status-ok  {display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:8px;font-size:13px;
+              background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.2);color:var(--accent-2);margin-bottom:14px}
+.status-none{display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:8px;font-size:13px;
+              background:rgba(248,81,73,.06);border:1px solid rgba(248,81,73,.2);color:var(--danger);margin-bottom:14px}
+
+/* Step visible logic */
+.step-panel{display:none}.step-panel.active{display:block}
+
+/* Trial badge */
+.trial-badge{background:var(--accent-dim);border:1px solid rgba(230,168,23,.25);border-radius:20px;
+             padding:6px 16px;font-size:12px;color:var(--accent);text-align:center;
+             font-family:var(--font-mono);margin-bottom:20px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">🏛 Lici<span>Estado</span></div>
+
+  <!-- Trial badge -->
+  <div class="trial-badge">⭐ Plan Pro activado · 14 días gratis</div>
+
+  <!-- Progress steps -->
+  <div class="progress">
+    <div class="step-dot {{ 'done' if tiene_ticket else 'active' }}" id="dot1">1</div>
+    <div class="step-line {{ 'done' if tiene_ticket else '' }}"></div>
+    <div class="step-dot {{ 'active' if tiene_ticket and n_reglas==0 else ('done' if n_reglas>0 else '') }}" id="dot2">2</div>
+    <div class="step-line {{ 'done' if n_reglas>0 else '' }}"></div>
+    <div class="step-dot {{ 'active' if n_reglas>0 else '' }}" id="dot3">3</div>
+  </div>
+
+  <!-- PASO 1: Ticket -->
+  <div class="step-panel {% if not tiene_ticket %}active{% endif %}" id="step1">
+    <div class="card">
+      <div class="card-icon">🎫</div>
+      <div class="card-title">Conecta tu ticket de API</div>
+      <div class="card-desc">Tu ticket permite a LiciEstado consultar Mercado Público en tu nombre. Es gratuito y se obtiene en 2 minutos.</div>
+      {% if tiene_ticket %}
+      <div class="status-ok">✅ Ticket configurado — puedes continuar al paso 2</div>
+      {% else %}
+      <div class="hint">
+        1. Ve a <a href="https://api.mercadopublico.cl" target="_blank">api.mercadopublico.cl</a><br>
+        2. Inicia sesión con tu RUT de proveedor<br>
+        3. Copia el ticket desde <strong>Mis APIs → ChileCompra Mercado Público</strong>
+      </div>
+      <form method="POST" action="/configuracion/ticket">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="field">
+          <label>Ticket de API</label>
+          <input type="text" name="ticket" placeholder="Ej: CA11674E-126A-415D-8E4C-AF5B..." required>
+        </div>
+        <button type="submit" class="btn-main">Guardar y validar →</button>
+      </form>
+      {% endif %}
+    </div>
+    {% if tiene_ticket %}
+    <a href="#" onclick="showStep(2)" class="btn-main" style="display:block;text-align:center;padding:12px;background:var(--accent);color:#1c1917;border-radius:8px;font-weight:700;text-decoration:none">Continuar →</a>
+    {% endif %}
+  </div>
+
+  <!-- PASO 2: Primera regla -->
+  <div class="step-panel {% if tiene_ticket and n_reglas==0 %}active{% endif %}" id="step2">
+    <div class="card">
+      <div class="card-icon">🎯</div>
+      <div class="card-title">Crea tu primera regla de alerta</div>
+      <div class="card-desc">Define qué tipo de licitaciones te interesan. Recibirás alertas diarias solo con las oportunidades que coincidan.</div>
+      {% if n_reglas > 0 %}
+      <div class="status-ok">✅ {{ n_reglas }} regla(s) configurada(s)</div>
+      <a href="#" onclick="showStep(3)" class="btn-main" style="display:block;text-align:center;padding:12px;background:var(--accent);color:#1c1917;border-radius:8px;font-weight:700;text-decoration:none">Continuar →</a>
+      {% else %}
+      <a href="/reglas/nueva" class="btn-main" style="display:block;text-align:center;text-decoration:none;padding:12px">
+        + Crear primera regla →
+      </a>
+      {% endif %}
+    </div>
+    <a href="#" onclick="showStep(3)" class="btn-skip">Omitir por ahora →</a>
+  </div>
+
+  <!-- PASO 3: Listo -->
+  <div class="step-panel {% if n_reglas > 0 %}active{% endif %}" id="step3">
+    <div class="card" style="text-align:center">
+      <div class="card-icon">🚀</div>
+      <div class="card-title">¡Todo listo!</div>
+      <div class="card-desc">
+        LiciEstado escaneará Mercado Público cada mañana a las 6 AM y te enviará las oportunidades relevantes.<br><br>
+        Tu plan Pro de prueba incluye <strong>Bid Analyzer</strong>, <strong>Analytics avanzado</strong> y <strong>reglas ilimitadas</strong> por 14 días.
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <a href="/dashboard" class="btn-main" style="text-decoration:none;display:block;text-align:center;padding:12px">Ir al dashboard →</a>
+        <a href="/licitaciones" style="display:block;text-align:center;padding:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text-muted);text-decoration:none;font-size:13px">Ver licitaciones descargadas</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showStep(n) {
+  document.querySelectorAll('.step-panel').forEach((p,i) => {
+    p.classList.toggle('active', i === n-1);
+  });
+  document.querySelectorAll('.step-dot').forEach((d,i) => {
+    d.classList.remove('active','done');
+    if(i < n-1) d.classList.add('done');
+    else if(i === n-1) d.classList.add('active');
+  });
+}
+</script>
+</body>
+</html>

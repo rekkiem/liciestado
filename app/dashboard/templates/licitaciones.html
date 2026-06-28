@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block title %}Licitaciones ({{ total_all | format_number }}){% endblock %}
+{% block topbar_title %}Licitaciones descargadas{% endblock %}
+{% block topbar_actions %}
+<a href="/licitaciones/export.csv?{{ qs_base }}" class="btn btn-ghost btn-sm">⬇ CSV</a>
+{% if n_filtros > 0 %}<a href="/licitaciones" class="btn btn-ghost btn-sm">✕ Limpiar</a>{% endif %}
+{% endblock %}
+
+{% block extra_head %}
+{% set n_filtros = (1 if q else 0)+(1 if f_tipo else 0)+(1 if f_estado else 0)+(1 if f_region else 0)+(1 if f_mmin else 0)+(1 if f_mmax else 0)+(1 if f_fd else 0)+(1 if f_fh else 0)+(1 if f_enr else 0)+(1 if f_org else 0) %}
+<style>
+.kpi-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+@media(max-width:800px){.kpi-strip{grid-template-columns:repeat(2,1fr)}}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 16px;position:relative;overflow:hidden}
+.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.kpi.amber::before{background:var(--accent)}.kpi.green::before{background:var(--accent-2)}
+.kpi.blue::before{background:var(--info)}.kpi.red::before{background:var(--danger)}
+.kpi-label{font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);margin-bottom:5px}
+.kpi-num{font-family:var(--font-mono);font-size:20px;font-weight:700;color:var(--text)}
+.kpi-num.amber{color:var(--accent)}.kpi-num.green{color:var(--accent-2)}.kpi-num.blue{color:var(--info)}
+.kpi-sub{font-size:10px;color:var(--text-muted);margin-top:2px;font-family:var(--font-mono)}
+.filter-panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:14px}
+.fp-hdr{display:flex;align-items:center;justify-content:space-between;padding:11px 15px;cursor:pointer;border-bottom:1px solid var(--border)}
+.fp-title{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);display:flex;align-items:center;gap:8px}
+.fp-body{padding:12px 14px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+@media(max-width:800px){.fp-body{grid-template-columns:repeat(2,1fr)}}
+.fp-footer{padding:9px 14px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+.fg{display:flex;flex-direction:column;gap:4px}
+.fg label{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted)}
+.fg input,.fg select{background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);border-radius:var(--radius);padding:7px 10px;font-size:12px;outline:none;transition:border-color .15s;width:100%}
+.fg input:focus,.fg select:focus{border-color:var(--accent)}
+.fg select option{background:var(--surface-2)}
+.ab-badge{background:var(--accent);color:#1c1917;border-radius:10px;padding:1px 7px;font-size:9px;font-weight:700}
+.result-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px}
+.result-info{font-family:var(--font-mono);font-size:11px;color:var(--text-muted)}
+.sort-bar{display:flex;gap:4px}
+.sort-btn{padding:4px 9px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;font-size:11px;font-family:var(--font-mono);text-decoration:none;transition:all .15s}
+.sort-btn:hover,.sort-btn.on{background:var(--accent-dim);color:var(--accent);border-color:var(--accent)}
+.table-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:12px}
+thead{background:var(--surface-2);border-bottom:1px solid var(--border)}
+th{padding:9px 12px;text-align:left;font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);white-space:nowrap}
+td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:rgba(255,255,255,.02)}
+.badge{display:inline-flex;align-items:center;gap:3px;padding:2px 6px;border-radius:4px;font-family:var(--font-mono);font-size:9px;font-weight:700;text-transform:uppercase}
+.badge-lic{background:var(--info-dim);color:var(--info);border:1px solid rgba(88,166,255,.2)}
+.badge-oc{background:var(--accent-dim);color:var(--accent);border:1px solid rgba(230,168,23,.2)}
+.t-cod{font-family:var(--font-mono);font-size:10px;color:var(--text-dim)}
+.t-title{max-width:240px;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:1.4}
+.t-org{font-size:10px;color:var(--text-muted);margin-top:2px}
+.monto{font-family:var(--font-mono);font-size:11px;color:var(--accent-2);white-space:nowrap}
+.t-null{font-family:var(--font-mono);font-size:10px;color:var(--text-dim)}
+.dot{display:inline-block;width:6px;height:6px;border-radius:50%}
+.dot-full{background:var(--accent-2);box-shadow:0 0 4px rgba(63,185,80,.4)}
+.dot-none{background:var(--border-2)}
+.act-link{display:inline-flex;align-items:center;padding:3px 7px;border-radius:var(--radius);border:1px solid transparent;text-decoration:none;font-family:var(--font-mono);font-size:10px;transition:all .15s}
+.al-p{color:var(--accent)}.al-p:hover{background:var(--accent-dim);border-color:var(--accent)}
+.al-s{color:var(--text-dim)}.al-s:hover{background:var(--surface-2);border-color:var(--border-2);color:var(--text-muted)}
+.al-pro{color:var(--accent-2)}.al-pro:hover{background:var(--accent-2-dim);border-color:var(--accent-2)}
+.pager{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-top:1px solid var(--border);flex-wrap:wrap;gap:8px}
+.pager-info{font-family:var(--font-mono);font-size:11px;color:var(--text-muted)}
+.pager-nums{display:flex;gap:3px}
+.pg{padding:4px 9px;border-radius:var(--radius);background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);text-decoration:none;font-size:11px;font-family:var(--font-mono);transition:all .15s}
+.pg:hover,.pg.on{background:var(--accent-dim);color:var(--accent);border-color:var(--accent)}
+.pg.off{opacity:.3;pointer-events:none}
+</style>
+{% endblock %}
+
+{% block content %}
+{% set n_filtros = (1 if q else 0)+(1 if f_tipo else 0)+(1 if f_estado else 0)+(1 if f_region else 0)+(1 if f_mmin else 0)+(1 if f_mmax else 0)+(1 if f_fd else 0)+(1 if f_fh else 0)+(1 if f_enr else 0)+(1 if f_org else 0) %}
+
+<!-- KPIs -->
+<div class="kpi-strip">
+  <div class="kpi amber"><div class="kpi-label">Total en BD</div><div class="kpi-num amber">{{ total_all | format_number }}</div></div>
+  <div class="kpi green"><div class="kpi-label">Con datos completos</div><div class="kpi-num green">{{ con_datos | format_number }}</div><div class="kpi-sub">región y monto</div></div>
+  <div class="kpi blue"><div class="kpi-label">Monto total</div><div class="kpi-num blue" style="font-size:15px">${{ (monto_total / 1e9) | round(1) }}B CLP</div></div>
+  <div class="kpi red"><div class="kpi-label">Resultados filtro</div><div class="kpi-num" style="color:#a78bfa">{{ total | format_number }}</div></div>
+</div>
+
+<!-- Filtros -->
+<div class="filter-panel">
+  <div class="fp-hdr" onclick="toggleFP(this)">
+    <span class="fp-title">🔍 Filtros {% if n_filtros > 0 %}<span class="ab-badge">{{ n_filtros }}</span>{% endif %}</span>
+    <span style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">▾</span>
+  </div>
+  <form method="GET" action="/licitaciones" id="fform">
+  <div class="fp-body" id="fpbody" {% if n_filtros==0 %}style="display:none"{% endif %}>
+    <div class="fg" style="grid-column:span 2"><label>Buscar título, código u organismo</label>
+      <input type="text" name="q" value="{{ q }}" placeholder="ej: software, notebook…"></div>
+    <div class="fg"><label>Organismo</label><input type="text" name="org" value="{{ f_org }}" placeholder="ej: MINSAL"></div>
+    <div class="fg"><label>Tipo</label>
+      <select name="tipo">
+        <option value="">Todos</option>
+        <option value="licitacion" {% if f_tipo=='licitacion' %}selected{% endif %}>Licitación</option>
+        <option value="orden_compra" {% if f_tipo=='orden_compra' %}selected{% endif %}>Orden de Compra</option>
+      </select></div>
+    <div class="fg"><label>Estado</label>
+      <select name="estado"><option value="">Todos</option>
+        {% for e, n in estados_opts %}<option value="{{ e }}" {% if f_estado==e %}selected{% endif %}>{{ e }} ({{ n }})</option>{% endfor %}
+      </select></div>
+    <div class="fg"><label>Región</label>
+      <select name="region"><option value="">Todas</option>
+        {% for cod, nombre, n in regiones_opts %}<option value="{{ cod }}" {% if f_region==cod|string %}selected{% endif %}>R{{ cod }} · {{ nombre }}</option>{% endfor %}
+      </select></div>
+    <div class="fg"><label>Monto mín (CLP)</label><input type="number" name="mmin" value="{{ f_mmin }}" placeholder="1000000" min="0"></div>
+    <div class="fg"><label>Monto máx (CLP)</label><input type="number" name="mmax" value="{{ f_mmax }}" placeholder="50000000" min="0"></div>
+    <div class="fg"><label>Fecha pub. desde</label><input type="date" name="fd" value="{{ f_fd }}"></div>
+    <div class="fg"><label>Fecha pub. hasta</label><input type="date" name="fh" value="{{ f_fh }}"></div>
+    <div class="fg"><label>Datos</label>
+      <select name="enr"><option value="">Todos</option>
+        <option value="si" {% if f_enr=='si' %}selected{% endif %}>✅ Con región/monto</option>
+        <option value="no" {% if f_enr=='no' %}selected{% endif %}>⚡ Solo listado</option>
+      </select></div>
+    <input type="hidden" name="orden" value="{{ orden }}"><input type="hidden" name="page" value="1">
+    <input type="hidden" name="pp" value="{{ per_page }}">
+  </div>
+  <div class="fp-footer" id="fpfooter" {% if n_filtros==0 %}style="display:none"{% endif %}>
+    <a href="/licitaciones" class="btn btn-ghost btn-sm">✕ Limpiar</a>
+    <button type="submit" class="btn btn-primary btn-sm">Aplicar →</button>
+  </div>
+  </form>
+</div>
+
+<!-- Results bar + sort -->
+<div class="result-bar">
+  <span class="result-info"><strong style="color:var(--accent)">{{ total | format_number }}</strong> resultado(s){% if n_filtros>0 %} con {{ n_filtros }} filtro(s){% endif %}</span>
+  <div class="sort-bar">
+    {% for o, lbl in [('sinc_desc','↓ Recientes'),('fecha_desc','↓ Fecha'),('monto_desc','↓ Monto'),('titulo_asc','A-Z')] %}
+    <a href="/licitaciones?{{ qs_base.replace('orden='~orden,'orden='~o) }}&page=1" class="sort-btn {% if orden==o %}on{% endif %}">{{ lbl }}</a>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Tabla -->
+<div class="table-card">
+{% if rows %}
+<div style="overflow-x:auto">
+<table>
+  <thead><tr><th>Tipo</th><th>Código</th><th>Título / Organismo</th><th>Estado</th>
+    <th>Región</th><th>Monto CLP</th><th>Cierre</th><th title="Datos completos">●</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr>
+    <td><span class="badge {{ 'badge-lic' if r.tipo=='licitacion' else 'badge-oc' }}">
+      {{ '📄 Lic' if r.tipo=='licitacion' else '🛒 OC' }}</span></td>
+    <td><span class="t-cod">{{ r.codigo }}</span></td>
+    <td><div class="t-title" title="{{ r.titulo }}">{{ r.titulo }}</div>
+      {% if r.organismo %}<div class="t-org">{{ r.organismo | truncate(42) }}</div>{% endif %}</td>
+    <td>{% if r.estado %}<span class="tag" style="font-size:10px">{{ r.estado }}</span>{% else %}<span class="t-null">—</span>{% endif %}</td>
+    <td>{% if r.region %}<span class="tag" style="font-size:10px">R{{ r.region }}</span>
+      <div style="font-size:10px;color:var(--text-muted)">{{ r.nombre_region|truncate(18,True,'') }}</div>
+      {% else %}<span class="t-null">—</span>{% endif %}</td>
+    <td>{% if r.monto_clp %}<span class="monto">${{ "{:,.0f}".format(r.monto_clp) }}</span>{% else %}<span class="t-null">—</span>{% endif %}</td>
+    <td><span style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted)">{{ r.fecha_cierre[:10] if r.fecha_cierre else '—' }}</span></td>
+    <td style="text-align:center"><span class="dot {{ 'dot-full' if r.enriquecido else 'dot-none' }}"
+        title="{{ 'Datos completos' if r.enriquecido else 'Solo listado' }}"></span></td>
+    <td><div style="display:flex;gap:3px">
+      <a href="/licitaciones/{{ r.id }}" class="act-link al-p">Ver</a>
+      {% if es_pro %}<a href="/licitaciones/{{ r.id }}/analizar" class="act-link al-pro" title="Bid Analyzer">📊</a>
+      {% else %}<a href="/upgrade" class="act-link al-s" title="Pro: Bid Analyzer">🔒</a>{% endif %}
+      {% if r.link %}<a href="{{ r.link }}" target="_blank" rel="noopener" class="act-link al-s">MP↗</a>{% endif %}
+    </div></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if total_paginas > 1 %}
+<div class="pager">
+  <span class="pager-info">{{ (page-1)*per_page+1 }}–{{ [page*per_page,total]|min }} de {{ total | format_number }}</span>
+  <div class="pager-nums">
+    <a href="/licitaciones?{{ qs_base }}&page=1" class="pg {% if page==1 %}off{% endif %}">«</a>
+    <a href="/licitaciones?{{ qs_base }}&page={{ page-1 }}" class="pg {% if page==1 %}off{% endif %}">‹</a>
+    {% for p in range([1,page-2]|max,[total_paginas+1,page+3]|min) %}
+    <a href="/licitaciones?{{ qs_base }}&page={{ p }}" class="pg {% if p==page %}on{% endif %}">{{ p }}</a>
+    {% endfor %}
+    <a href="/licitaciones?{{ qs_base }}&page={{ page+1 }}" class="pg {% if page==total_paginas %}off{% endif %}">›</a>
+    <a href="/licitaciones?{{ qs_base }}&page={{ total_paginas }}" class="pg {% if page==total_paginas %}off{% endif %}">»</a>
+  </div>
+</div>
+{% endif %}
+{% else %}
+<div class="empty-state"><div class="empty-state-icon">📋</div>
+<h3>{% if n_filtros>0 %}Sin resultados{% else %}Sin datos descargados{% endif %}</h3>
+<p>{% if n_filtros>0 %}<a href="/licitaciones" class="link">Limpiar filtros →</a>
+{% else %}Ejecuta: <code style="background:var(--surface-2);padding:2px 8px;border-radius:4px;font-size:12px;color:var(--accent)">python scripts/poblar_bd.py --dias 7</code>{% endif %}</p>
+</div>
+{% endif %}
+</div>
+
+<div style="display:flex;align-items:center;gap:16px;margin-top:10px;font-size:10px;color:var(--text-dim);font-family:var(--font-mono)">
+  <span><span class="dot dot-full" style="display:inline-block"></span> Datos completos</span>
+  <span><span class="dot dot-none" style="display:inline-block"></span> Solo listado — usa enriquecer_bd.py</span>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function toggleFP(hdr) {
+  const body = document.getElementById('fpbody');
+  const foot = document.getElementById('fpfooter');
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'grid';
+  if(foot) foot.style.display = open ? 'none' : 'flex';
+  hdr.querySelector('span:last-child').textContent = open ? '▾' : '▴';
+}
+{% set n_filtros = (1 if q else 0)+(1 if f_tipo else 0)+(1 if f_estado else 0)+(1 if f_region else 0)+(1 if f_mmin else 0)+(1 if f_mmax else 0)+(1 if f_fd else 0)+(1 if f_fh else 0)+(1 if f_enr else 0)+(1 if f_org else 0) %}
+if({{ n_filtros }} > 0) {
+  document.getElementById('fpbody').style.display = 'grid';
+  document.getElementById('fpfooter').style.display = 'flex';
+}
+</script>
+{% endblock %}

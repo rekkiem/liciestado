@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}{{ item.codigo }}{% endblock %}
+{% block topbar_title %}Detalle licitación{% endblock %}
+{% block topbar_actions %}
+<a href="/licitaciones" class="btn btn-ghost btn-sm">← Licitaciones</a>
+{% if current_user.es_pro %}
+<a href="/licitaciones/{{ item.id }}/analizar" class="btn btn-primary btn-sm">📊 Analizar</a>
+{% else %}
+<a href="/upgrade" class="btn btn-ghost btn-sm">🔒 Analizar (Pro)</a>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div style="display:grid;grid-template-columns:1fr 280px;gap:18px;align-items:start">
+<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
+  <div style="padding:18px 22px;background:var(--surface-2);border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+    <div>
+      <div style="font-size:16px;font-weight:700;line-height:1.4">{{ item.datos.titulo or item.codigo }}</div>
+      <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin-top:4px">{{ item.codigo }}</div>
+    </div>
+    <span style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:4px;
+                 font-family:var(--font-mono);font-size:10px;font-weight:700;flex-shrink:0;
+                 background:var(--info-dim);color:var(--info);border:1px solid rgba(88,166,255,.2)">
+      {{ '📄 Licitación' if item.tipo=='licitacion' else '🛒 OC' }}
+    </span>
+  </div>
+  {% set fields = [
+    ('Monto estimado', ('$'~'{:,.0f}'.format(item.monto_clp)~' CLP') if item.monto_clp else None, 'color:var(--accent-2);font-size:17px;font-weight:700'),
+    ('Estado', item.estado, ''),
+    ('Organismo', item.datos.organismo, ''),
+    ('Región', ('R'~item.region~' · '~item.nombre_region) if item.region else None, ''),
+    ('Publicación', item.datos.fecha_publicacion, 'font-family:var(--font-mono)'),
+    ('Cierre', item.datos.fecha_cierre, 'font-family:var(--font-mono)'),
+    ('Descripción', item.datos.descripcion, 'font-size:12px;line-height:1.6'),
+  ] %}
+  {% for lbl, val, sty in fields %}{% if val %}
+  <div style="display:flex;align-items:baseline;gap:14px;padding:11px 22px;border-bottom:1px solid var(--border)">
+    <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;min-width:110px;flex-shrink:0">{{ lbl }}</span>
+    <span style="{{ sty }};color:{{ 'var(--text)' if not sty else 'inherit' }};font-size:13px">{{ val }}</span>
+  </div>
+  {% endif %}{% endfor %}
+  {% if item.datos.codigo_producto %}
+  <div style="display:flex;align-items:center;gap:14px;padding:11px 22px;border-bottom:1px solid var(--border)">
+    <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;min-width:110px">Categorías</span>
+    <div style="display:flex;gap:4px;flex-wrap:wrap">{% for c in item.datos.codigo_producto %}<span class="tag">{{ c }}</span>{% endfor %}</div>
+  </div>
+  {% endif %}
+  {% if item.datos.link_detalle %}
+  <div style="padding:16px 22px;border-bottom:1px solid var(--border)">
+    <a href="{{ item.datos.link_detalle }}" target="_blank" class="btn btn-primary">🔗 Ver en Mercado Público</a>
+  </div>
+  {% endif %}
+  {% if not item.enriquecido %}
+  <div style="padding:12px 22px;background:rgba(230,168,23,.04);border-bottom:1px solid var(--border);font-size:12px;color:var(--accent)">
+    ⚡ Este registro tiene solo datos del listado. Ejecuta <code style="font-family:var(--font-mono);background:rgba(0,0,0,.2);padding:1px 5px;border-radius:3px">python scripts/enriquecer_bd.py</code> para obtener región, monto y organismo.
+  </div>
+  {% endif %}
+  <details style="padding:0 22px 16px;margin-top:10px">
+    <summary style="cursor:pointer;font-size:11px;color:var(--text-muted);font-family:var(--font-mono)">▶ JSON completo</summary>
+    <pre style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-size:10px;font-family:var(--font-mono);color:var(--text-muted);white-space:pre-wrap;max-height:260px;overflow-y:auto;margin-top:8px">{{ item.datos|tojson(indent=2) }}</pre>
+  </details>
+</div>
+<div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:14px">
+    <div style="padding:10px 14px;background:var(--surface-2);border-bottom:1px solid var(--border);font-size:11px;font-weight:700">📌 Metadata</div>
+    {% for l, v in [('Snapshot ID','#'~item.id),('Tipo',item.tipo),('Sincronizado',item.fecha_sinc.strftime('%d-%m-%Y %H:%M') if item.fecha_sinc else '—'),('Datos','Completos ✅' if item.enriquecido else 'Solo listado ⚡')] %}
+    <div style="display:flex;flex-direction:column;gap:2px;padding:9px 14px;border-bottom:1px solid var(--border)">
+      <span style="font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-dim)">{{ l }}</span>
+      <span style="font-size:12px;color:var(--text)">{{ v }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  <div style="display:flex;flex-direction:column;gap:8px">
+    {% if current_user.es_pro %}
+    <a href="/licitaciones/{{ item.id }}/analizar" class="btn btn-primary" style="text-align:center">📊 Analizar propuesta</a>
+    {% else %}
+    <a href="/upgrade" class="btn btn-ghost" style="text-align:center">🔒 Analizar (Pro)</a>
+    {% endif %}
+    {% if item.datos.link_detalle %}<a href="{{ item.datos.link_detalle }}" target="_blank" class="btn btn-ghost" style="text-align:center">Ver en Mercado Público ↗</a>{% endif %}
+    <a href="/licitaciones" class="btn btn-ghost" style="text-align:center">← Volver al listado</a>
+  </div>
+</div>
+</div>
+{% endblock %}

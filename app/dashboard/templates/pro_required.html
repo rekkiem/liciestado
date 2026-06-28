@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Plan Pro requerido{% endblock %}
+{% block topbar_title %}Función exclusiva Pro{% endblock %}
+
+{% block content %}
+<div style="max-width:500px;margin:60px auto;text-align:center">
+  <div style="font-size:50px;margin-bottom:20px">⭐</div>
+  <h2 style="font-size:22px;font-weight:800;margin-bottom:12px">{{ feature }} es exclusivo del plan Pro</h2>
+  <p style="color:var(--text-muted);font-size:14px;line-height:1.7;margin-bottom:28px">
+    Mejora al plan Pro por <strong style="color:var(--accent)">$49 USD/mes</strong> y accede a bid analyzer estadístico, analytics avanzado y reglas ilimitadas.
+  </p>
+  <div style="display:flex;gap:12px;justify-content:center">
+    <a href="/upgrade" class="btn btn-primary">↑ Ver planes Pro</a>
+    <a href="/dashboard" class="btn btn-ghost">Volver al dashboard</a>
+  </div>
+</div>
+{% endblock %}
