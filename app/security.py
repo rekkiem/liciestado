@@ -48,3 +48,18 @@ def add_security_headers(response):
         "connect-src 'self';"
     )
     return response
+
+
+def check_insecure_defaults():
+    """Llama al arranque. Loguea warning fuerte si se usan defaults inseguros."""
+    from config import settings
+    bad = []
+    if settings.SECRET_KEY in ("cambia-esto-en-produccion", "change-me", "secret", ""):
+        bad.append("SECRET_KEY")
+    if settings.DASHBOARD_PASS in ("admin", "password", "1234", ""):
+        bad.append("DASHBOARD_PASS")
+    if bad:
+        logger.warning(
+            "⚠️  DEFAULTS INSEGUROS EN USO: %s. Cambia estas variables en .env antes de producción.",
+            ", ".join(bad),
+        )

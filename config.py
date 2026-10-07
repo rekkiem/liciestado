@@ -3,13 +3,16 @@ from typing import Optional
 
 
 class Settings(BaseSettings):
+    # API Mercado Público
     TICKET_MERCADO_PUBLICO: str = ""
     API_BASE_URL: str = "https://api.mercadopublico.cl/servicios/v1"
     API_RATE_PER_SECOND: int = 5
     API_RATE_PER_DAY: int = 10_000
 
-    DATABASE_URL: str = "sqlite:///./mercadopublico.db"
+    # Base de datos
+    DATABASE_URL: str = "sqlite:///./liciestado.db"
 
+    # SMTP
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
     SMTP_USER: str = ""
@@ -20,8 +23,8 @@ class Settings(BaseSettings):
     # Multi-tenant: la contraseña de Basic Auth ya no se usa para el dashboard
     # Se mantiene para endpoints de admin (/api/status, etc.)
     DASHBOARD_USER: str = "admin"
-    DASHBOARD_PASS: str = "admin"
-    SECRET_KEY: str = "cambia-esto-en-produccion"
+    DASHBOARD_PASS: str = "admin"          # CAMBIAR en producción
+    SECRET_KEY: str = "cambia-esto-en-produccion"  # CAMBIAR en producción (min 32 chars)
 
     # Cifrado Fernet para tickets de usuarios
     FERNET_KEY: str = ""
