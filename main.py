@@ -79,25 +79,17 @@ def run_server():
     iniciar_worker()
     logger.info("Worker de email iniciado.")
 
-    from app.webhook_service import iniciar_worker_webhook
-    iniciar_worker_webhook()
-    logger.info("Worker de webhooks iniciado.")
-
     from app.scheduler import iniciar_scheduler
-    scheduler = iniciar_scheduler()
+    iniciar_scheduler()
+    logger.info("Scheduler iniciado.")
 
     from app.dashboard import create_app
-    flask_app = create_app()
+    app = create_app()
 
-    flask_thread = threading.Thread(
-        target=lambda: flask_app.run(
-            host="0.0.0.0",
-            port=int(os.environ.get("PORT", 5000)),
-            debug=False,
-            use_reloader=False,
-        ),
-        daemon=True, name="flask-server",
-    )
+    port = int(os.environ.get("PORT", 5000))
+    def _run():
+        app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+    flask_thread = threading.Thread(target=_run, daemon=True)
     flask_thread.start()
     logger.info("Dashboard en http://localhost:%s", os.environ.get("PORT", 5000))
     logger.info("Landing:    http://localhost:%s/landing", os.environ.get("PORT", 5000))
@@ -124,6 +116,12 @@ def main():
         create_admin(*args.create_admin)
     run_server()
 
+
+try:
+    from app.security import check_insecure_defaults
+    check_insecure_defaults()
+except Exception:
+    pass
 
 if __name__ == "__main__":
     main()
