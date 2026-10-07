@@ -12,6 +12,7 @@ app/dashboard/auth_routes.py — Rutas de autenticación.
   POST /configuracion/password
 """
 import logging
+from datetime import datetime, timezone, timedelta
 from flask import (
     Blueprint, render_template, request, redirect,
     url_for, flash, abort,
@@ -86,15 +87,14 @@ def register():
         try:
             user = registrar_usuario(email, password, nombre)
             login_user(user, remember=True)
-            # Crear config por defecto + trial Pro 14 días
+            # Crear config por defecto + trial Pro 14 días (plan base = free)
             from app.models import UserConfig
-            from datetime import timedelta
             trial_hasta = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=14)
             with get_db() as db:
                 db.add(UserConfig(user_id=user.id, notif_mode="digest",
                                   trial_pro_hasta=trial_hasta))
-                db.query(User).filter_by(id=user.id).update({"plan": "pro"})
-            flash("¡Cuenta creada! 🎉 Tienes 14 días de Plan Pro gratis. Ahora configura tu ticket.", "success")
+                db.query(User).filter_by(id=user.id).update({"plan": "free"})  # base free; Pro via trial_pro_hasta
+            flash("¡Cuenta creada! 🎉 Tienes 14 días de Plan Pro de prueba. Ahora configura tu ticket de Mercado Público.", "success")
             return redirect(url_for("auth.onboarding"))
         except EmailYaRegistrado:
             flash("Ese email ya está registrado. ¿Quieres iniciar sesión?", "error")
@@ -197,13 +197,23 @@ def upgrade():
 @bp.route("/upgrade/<plan>", methods=["POST"])
 @login_required
 def upgrade_plan(plan: str):
-    """Simulación de upgrade. En producción → integrar Mercado Pago."""
+    """Simulación de upgrade. NO hay cobro real todavía.
+    En producción se reemplazará por Mercado Pago / pasarela.
+    """
     if plan not in ("pro", "free"):
         abort(400)
+    # Solo permite bajar a free; subir a pro permanente requiere pago real.
+    # Mientras no haya pasarela, el acceso Pro se otorga solo vía trial_pro_hasta.
+    if plan == "pro":
+        flash(
+            "El upgrade a Pro permanente aún no está habilitado (falta integración de pagos). "
+            "Si tienes trial activo, sigue disfrutando del Plan Pro hasta que expire.",
+            "warning",
+        )
+        return redirect(url_for("auth.configuracion"))
     with get_db() as db:
-        db.query(User).filter_by(id=current_user.id).update({"plan": plan})
-    accion = "actualizado a Pro" if plan == "pro" else "cambiado a Free"
-    flash(f"Plan {accion}. (Simulado — integrar Mercado Pago en producción)", "success")
+        db.query(User).filter_by(id=current_user.id).update({"plan": "free"})
+    flash("Plan cambiado a Free.", "success")
     return redirect(url_for("auth.configuracion"))
 
 
@@ -258,9 +268,33 @@ def onboarding():
 @login_required
 def configuracion_webhook():
     from app.models import UserConfig
+    from urllib.parse import urlparse
     url    = request.form.get("webhook_url", "").strip()
     activo = request.form.get("webhook_activo") == "1"
     modo   = request.form.get("notif_mode", "digest")
+
+    # Validación anti-SSRF básica: solo https, hosts públicos
+    if url:
+        parsed = urlparse(url)
+        if parsed.scheme != "https":
+            flash("El webhook debe usar HTTPS.", "error")
+            return redirect(url_for("auth.configuracion"))
+        host = (parsed.hostname or "").lower()
+        blocked = (
+            host in ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+            or host.endswith(".local")
+            or host.endswith(".internal")
+            or host.startswith("10.")
+            or host.startswith("192.168.")
+            or host.startswith("172.")
+            or not host
+        )
+        if blocked:
+            flash("URL de webhook no permitida (host interno o inválido).", "error")
+            return redirect(url_for("auth.configuracion"))
+        if len(url) > 500:
+            flash("URL de webhook demasiado larga.", "error")
+            return redirect(url_for("auth.configuracion"))
 
     with get_db() as db:
         cfg = db.query(UserConfig).filter_by(user_id=current_user.id).first()
