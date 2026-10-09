@@ -95,7 +95,7 @@ def home():
 @bp.route("/reglas")
 @login_required
 def reglas_lista():
-    """Alias: el listado de reglas vive en el dashboard."""
+    """Alias del dashboard para el menú lateral."""
     return home()
 
 
@@ -150,7 +150,6 @@ def _guardar_regla(regla_id):
             r.activa = activa
             flash("Regla actualizada.", "success")
         else:
-            # límite free
             n = db.query(ReglaUsuario).filter_by(user_id=_u()).count()
             if n >= current_user.limite_reglas:
                 flash("Límite de reglas alcanzado. Mejora a Pro.", "error")
@@ -216,28 +215,57 @@ def regla_run(regla_id: int):
 @bp.route("/alertas")
 @login_required
 def alertas():
-    page = max(1, int(request.args.get("page", 1)))
-    per = 30
+    page         = request.args.get("page", 1, type=int)
+    per_page     = 30
+    tipo_filtro  = request.args.get("tipo", "").strip()
+    regla_filtro = request.args.get("regla", "").strip()
+
     with get_db() as db:
         q = db.query(AlertaGenerada).filter_by(user_id=_u())
-        total = q.count()
-        items = q.order_by(AlertaGenerada.fecha_alerta.desc()).offset((page - 1) * per).limit(per).all()
-        reglas_sel = db.query(ReglaUsuario.id, ReglaUsuario.nombre_regla).filter_by(user_id=_u()).all()
-        rows = [{
-            "id": a.id,
-            "entidad_id": a.entidad_id,
-            "regla_nombre": a.regla.nombre_regla if a.regla else "—",
-            "titulo": (a.datos_resumen or {}).get("titulo", a.entidad_id),
-            "monto": (a.datos_resumen or {}).get("monto_clp"),
-            "fecha_alerta": a.fecha_alerta,
-            "enviado_email": a.enviado_email,
-        } for a in items]
+        if tipo_filtro:
+            q = q.filter(cast(AlertaGenerada.datos_resumen["tipo"], String) == tipo_filtro)
+        if regla_filtro:
+            try:
+                q = q.filter(AlertaGenerada.regla_id == int(regla_filtro))
+            except ValueError:
+                pass
+
+        total    = q.count()
+        alertas_ = q.order_by(AlertaGenerada.fecha_alerta.desc()).offset(
+            (page - 1) * per_page).limit(per_page).all()
+
+        reglas_sel = db.query(ReglaUsuario.id, ReglaUsuario.nombre_regla).filter_by(
+            user_id=_u()).all()
+
+        alertas_data = []
+        for a in alertas_:
+            d = a.datos_resumen or {}
+            alertas_data.append({
+                "id": a.id, "regla_id": a.regla_id,
+                "regla_nombre": a.regla.nombre_regla if a.regla else "—",
+                "entidad_id": a.entidad_id,
+                "codigo": a.entidad_id,
+                "titulo": d.get("titulo", a.entidad_id),
+                "organismo": d.get("organismo"),
+                "region": d.get("region"),
+                "monto_clp": d.get("monto_clp"),
+                "fecha_alerta": a.fecha_alerta,
+                "enviado_email": a.enviado_email,
+                "tipo": d.get("tipo", "licitacion"),
+            })
+
+        reglas_select_data = [{"id": r[0], "nombre": r[1]} for r in reglas_sel]
+
     return render_template(
         "alertas.html",
-        alertas=rows,
-        reglas=[{"id": r.id, "nombre": r.nombre_regla} for r in reglas_sel],
-        page=page, per=per, total=total,
-        regla_filtro=request.args.get("regla", ""),
+        alertas=alertas_data,
+        total=total,
+        total_paginas=max(1, (total + per_page - 1) // per_page),
+        page=page,
+        per_page=per_page,
+        tipo_filtro=tipo_filtro,
+        regla_filtro=regla_filtro,
+        reglas_select=reglas_select_data,
     )
 
 
@@ -248,13 +276,16 @@ def alerta_detalle(alerta_id: int):
         a = db.query(AlertaGenerada).filter_by(id=alerta_id, user_id=_u()).first()
         if not a:
             abort(404)
+        d = a.datos_resumen or {}
         data = {
             "id": a.id,
             "entidad_id": a.entidad_id,
             "regla_nombre": a.regla.nombre_regla if a.regla else "—",
-            "datos": a.datos_resumen or {},
+            "datos": d,
             "fecha_alerta": a.fecha_alerta,
             "enviado_email": a.enviado_email,
+            "titulo": d.get("titulo", a.entidad_id),
+            "tipo": d.get("tipo", "licitacion"),
         }
     return render_template("alerta_detalle.html", alerta=data)
 
@@ -262,69 +293,124 @@ def alerta_detalle(alerta_id: int):
 @bp.route("/licitaciones")
 @login_required
 def licitaciones_browser():
+    page = request.args.get("page", 1, type=int)
+    per_page = min(request.args.get("pp", 50, type=int), 200)
     q = request.args.get("q", "").strip()
-    estado = request.args.get("estado", "")
-    region = request.args.get("region", "")
-    mmin = request.args.get("mmin", "")
-    mmax = request.args.get("mmax", "")
-    page = max(1, int(request.args.get("page", 1)))
-    pp = min(100, max(10, int(request.args.get("pp", 50))))
+    f_tipo = request.args.get("tipo", "").strip()
+    f_estado = request.args.get("estado", "").strip()
+    f_region = request.args.get("region", "").strip()
+    f_mmin = request.args.get("mmin", "").strip()
+    f_mmax = request.args.get("mmax", "").strip()
+    f_fd = request.args.get("fd", "").strip()
+    f_fh = request.args.get("fh", "").strip()
+    f_enr = request.args.get("enr", "").strip()
+    f_org = request.args.get("org", "").strip()
     orden = request.args.get("orden", "sinc_desc")
 
     with get_db() as db:
         base_q = db.query(LicitacionSnapshot)
+        if f_tipo:
+            base_q = base_q.filter(LicitacionSnapshot.tipo == f_tipo)
+        if f_estado:
+            base_q = base_q.filter(LicitacionSnapshot.estado == f_estado)
+        if f_region:
+            try:
+                base_q = base_q.filter(LicitacionSnapshot.region == int(f_region))
+            except ValueError:
+                pass
         if q:
+            like = f"%{q}%"
             base_q = base_q.filter(
-                cast(LicitacionSnapshot.datos["titulo"], String).ilike(f"%{q}%")
-                | LicitacionSnapshot.codigo.ilike(f"%{q}%")
+                LicitacionSnapshot.codigo.ilike(like)
+                | cast(LicitacionSnapshot.datos["titulo"], String).ilike(like)
             )
-        if estado:
-            base_q = base_q.filter(LicitacionSnapshot.estado.ilike(f"%{estado}%"))
-        if region:
+        if f_mmin:
             try:
-                base_q = base_q.filter(LicitacionSnapshot.region == int(region))
+                base_q = base_q.filter(LicitacionSnapshot.monto_clp >= int(f_mmin))
             except ValueError:
                 pass
-        if mmin:
+        if f_mmax:
             try:
-                base_q = base_q.filter(LicitacionSnapshot.monto_clp >= int(mmin))
+                base_q = base_q.filter(LicitacionSnapshot.monto_clp <= int(f_mmax))
             except ValueError:
                 pass
-        if mmax:
-            try:
-                base_q = base_q.filter(LicitacionSnapshot.monto_clp <= int(mmax))
-            except ValueError:
-                pass
+        if f_org:
+            base_q = base_q.filter(
+                cast(LicitacionSnapshot.datos["organismo"], String).ilike(f"%{f_org}%")
+            )
 
         orden_map = {
             "sinc_desc": LicitacionSnapshot.fecha_sincronizacion.desc(),
             "sinc_asc": LicitacionSnapshot.fecha_sincronizacion.asc(),
-            "fecha_desc": LicitacionSnapshot.fecha_publicacion.desc().nulls_last(),
             "monto_desc": LicitacionSnapshot.monto_clp.desc().nulls_last(),
+            "fecha_desc": LicitacionSnapshot.fecha_publicacion.desc().nulls_last(),
         }
-        base_q = base_q.order_by(orden_map.get(orden, LicitacionSnapshot.fecha_sincronizacion.desc()))
+        base_q = base_q.order_by(
+            orden_map.get(orden, LicitacionSnapshot.fecha_sincronizacion.desc())
+        )
+
         total = base_q.count()
-        items = base_q.offset((page - 1) * pp).limit(pp).all()
+        snaps = base_q.offset((page - 1) * per_page).limit(per_page).all()
+
+        total_all = db.query(func.count(LicitacionSnapshot.id)).scalar() or 0
+        con_datos = db.query(func.count(LicitacionSnapshot.id)).filter(
+            LicitacionSnapshot.monto_clp.isnot(None)
+        ).scalar() or 0
+        monto_total = db.query(func.sum(LicitacionSnapshot.monto_clp)).scalar() or 0
+        monto_prom = (monto_total / con_datos) if con_datos else 0
+
+        estados_q = (
+            db.query(LicitacionSnapshot.estado, func.count(LicitacionSnapshot.id))
+            .filter(LicitacionSnapshot.estado.isnot(None), LicitacionSnapshot.estado != "")
+            .group_by(LicitacionSnapshot.estado)
+            .order_by(func.count(LicitacionSnapshot.id).desc())
+            .all()
+        )
+        estados_opts = [(e, n) for e, n in estados_q if e]
+
+        regiones_q = (
+            db.query(LicitacionSnapshot.region, func.count(LicitacionSnapshot.id))
+            .filter(LicitacionSnapshot.region.isnot(None))
+            .group_by(LicitacionSnapshot.region)
+            .order_by(func.count(LicitacionSnapshot.id).desc())
+            .all()
+        )
+        regiones_opts = [(r, REGIONES_CHILE.get(r, f"R{r}"), n) for r, n in regiones_q]
+
         rows = []
-        for s in items:
+        for s in snaps:
             d = s.datos or {}
             rows.append({
-                "id": s.id,
-                "codigo": s.codigo,
-                "titulo": d.get("titulo", s.codigo),
-                "organismo": d.get("organismo") or d.get("nombre_organismo"),
-                "monto": s.monto_clp,
-                "estado": s.estado,
+                "id": s.id, "codigo": s.codigo, "tipo": s.tipo,
+                "titulo": d.get("titulo") or s.codigo,
+                "organismo": d.get("organismo") or "",
                 "region": s.region,
-                "nombre_region": d.get("nombre_region"),
+                "nombre_region": d.get("nombre_region") or REGIONES_CHILE.get(s.region, ""),
+                "monto_clp": s.monto_clp, "estado": s.estado or d.get("estado") or "",
                 "fecha_pub": s.fecha_publicacion.strftime("%d-%m-%Y") if s.fecha_publicacion else None,
                 "fecha_cierre": d.get("fecha_cierre"),
                 "fecha_sinc": s.fecha_sincronizacion.strftime("%d-%m-%Y %H:%M") if s.fecha_sincronizacion else "",
+                "link": d.get("link_detalle") or "",
+                "enriquecido": s.region is not None or s.monto_clp is not None,
             })
+
+    qs_base = (
+        f"q={q}&tipo={f_tipo}&estado={f_estado}&region={f_region}"
+        f"&mmin={f_mmin}&mmax={f_mmax}&fd={f_fd}&fh={f_fh}&enr={f_enr}"
+        f"&org={f_org}&pp={per_page}&orden={orden}"
+    )
+    n_filtros = sum(1 for v in [q, f_tipo, f_estado, f_region, f_mmin, f_mmax, f_fd, f_fh, f_enr, f_org] if v)
     return render_template(
         "licitaciones.html",
-        items=rows, total=total, page=page, pp=pp,
-        filters={"q": q, "estado": estado, "region": region, "mmin": mmin, "mmax": mmax, "orden": orden},
+        rows=rows, page=page, per_page=per_page,
+        total=total, total_paginas=max(1, (total + per_page - 1) // per_page),
+        q=q, f_tipo=f_tipo, f_estado=f_estado, f_region=f_region,
+        f_mmin=f_mmin, f_mmax=f_mmax, f_fd=f_fd, f_fh=f_fh, f_enr=f_enr,
+        orden=orden, f_org=f_org, estados_opts=estados_opts,
+        regiones_opts=regiones_opts, REGIONES_CHILE=REGIONES_CHILE,
+        total_all=total_all, con_datos=con_datos, sin_datos=total_all - con_datos,
+        monto_total=monto_total, monto_prom=int(monto_prom), qs_base=qs_base,
+        n_filtros=n_filtros, es_pro=current_user.es_pro,
     )
 
 
@@ -342,7 +428,8 @@ def licitacion_detalle(snap_id: int):
             "monto": s.monto_clp, "estado": s.estado, "region": s.region,
             "nombre_region": d.get("nombre_region"),
             "fecha_pub": s.fecha_publicacion, "fecha_cierre": d.get("fecha_cierre"),
-            "datos": d,
+            "datos": d, "tipo": s.tipo,
+            "link": d.get("link_detalle") or "",
         }
     return render_template("licitacion_detalle.html", item=item)
 
