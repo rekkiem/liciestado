@@ -12,156 +12,163 @@ from app.models import LicitacionSnapshot
 @dataclass
 class PrecioEstimado:
     precio_base: int; precio_minimo: int; precio_maximo: int
-    ic_95_bajo: int; ic_95_alto: int; desviacion: float; n_muestras: int; confianza: str
-
+    ic_95_bajo: int; ic_95_alto: int; ratio_historico: float
+    n_muestra: int; confianza: str
 
 @dataclass
 class BidOptimo:
-    precio_optimo: int; margen_pct: float; probabilidad_ganar: float
-    rango_agresivo: Tuple[int, int]; rango_conservador: Tuple[int, int]
-
+    precio_optimo: int; margen_sugerido: float; prob_ganar: float
+    utilidad_esperada: int; curva_precios: List[Dict]
 
 @dataclass
 class PerfilOrganismo:
-    nombre: str; total_licitaciones: int; monto_promedio: Optional[float]
-    ratio_adj_promedio: Optional[float]; competitividad: str
-
+    nombre: str; total_licitaciones: int; monto_promedio: int
+    ratio_adj_promedio: float; categorias_frecuentes: List[str]
+    plazo_promedio_dias: int; score_pagador: int
 
 @dataclass
-class AnalisisRiesgo:
-    nivel: str; score: int; factores: List[Dict[str, str]]
-
+class RiskScore:
+    score: int; nivel: str; factores: List[Dict]; recomendacion: str
 
 @dataclass
 class AnalisisPropuesta:
-    licitacion_id: int; codigo: str; titulo: str; monto_estimado: int
+    licitacion_id: int; codigo: str; titulo: str; monto_estimado: Optional[int]
     precio: PrecioEstimado; bid_optimo: BidOptimo; organismo: PerfilOrganismo
-    riesgo: AnalisisRiesgo; score_oportunidad: int; veredicto: str
-    justificacion: str; similares: List[Dict]; generado_en: datetime = field(default_factory=datetime.utcnow)
-    disclaimer: str = (
-        "Análisis estadístico orientativo basado en datos históricos de Mercado Público. "
-        "NO constituye predicción de adjudicación ni consejo de oferta. "
-        "La decisión final es siempre del usuario."
-    )
+    riesgo: RiskScore; score_oportunidad: int; veredicto: str
+    justificacion: str; similares: List[Dict]; generado_en: str
 
 
 class BidAnalyzer:
-    N_SIM = 5000
+    _RATIO_DEFAULT = 0.87; _RATIO_SIGMA = 0.12; _N_MONTE_CARLO = 10_000; _COMPETIDORES_EST = 4
 
-    def analizar(self, snap_id: int, costo_propio: Optional[int] = None) -> Optional[AnalisisPropuesta]:
+    def analizar(self, snap_id: int, costo_propio: Optional[int] = None) -> AnalisisPropuesta:
         with get_db() as db:
             snap = db.query(LicitacionSnapshot).filter_by(id=snap_id).first()
-            if not snap:
-                return None
+            if not snap: raise ValueError(f"Snapshot {snap_id} no encontrado")
             datos = snap.datos or {}
-            codigo = snap.codigo
-            titulo = datos.get("titulo") or ""
-            monto = snap.monto_clp or 0
-            organismo_nombre = datos.get("organismo") or datos.get("nombre_organismo") or ""
-            org_codigo = datos.get("codigo_organismo")
+            codigo = snap.codigo; titulo = datos.get("titulo", "")
+            monto = snap.monto_clp
+            organismo_nombre = datos.get("organismo") or datos.get("nombre_organismo") or "Desconocido"
+            org_codigo = datos.get("codigo_organismo") or ""
             fecha_cierre_str = datos.get("fecha_cierre")
-
-            similares_raw = self._buscar_similares(db, snap, 40)
+            similares_raw = self._buscar_similares(db, snap, 200)
             similares_org = self._buscar_por_organismo(db, org_codigo or organismo_nombre, 100)
 
-            precio   = self._calcular_precio(monto, similares_raw)
-            bid_opt  = self._optimizar_bid(precio, costo_propio, monto)
-            perfil   = self._perfil_organismo(organismo_nombre, similares_org)
-            riesgo   = self._calcular_riesgo(titulo, monto, fecha_cierre_str, perfil, precio)
-            score    = self._score_oportunidad(precio, bid_opt, perfil, riesgo)
-            veredicto, justif = self._veredicto(score, riesgo, precio, bid_opt)
-            return AnalisisPropuesta(
-                licitacion_id=snap_id, codigo=codigo, titulo=titulo, monto_estimado=monto,
-                precio=precio, bid_optimo=bid_opt, organismo=perfil, riesgo=riesgo,
-                score_oportunidad=score, veredicto=veredicto, justificacion=justif,
-                similares=[{"codigo":s["codigo"],"titulo":s["titulo"][:70],"monto":s["monto"],"estado":s["estado"],"ratio":s.get("ratio")} for s in similares_raw[:8]],
-            )
+        precio   = self._calcular_precio(monto, similares_raw)
+        bid_opt  = self._optimizar_bid(precio, costo_propio, monto)
+        perfil   = self._perfil_organismo(organismo_nombre, similares_org)
+        riesgo   = self._calcular_riesgo(titulo, monto, fecha_cierre_str, perfil, precio)
+        score    = self._score_oportunidad(precio, bid_opt, perfil, riesgo)
+        veredicto, justif = self._veredicto(score, riesgo, precio, bid_opt)
+        return AnalisisPropuesta(
+            licitacion_id=snap_id, codigo=codigo, titulo=titulo, monto_estimado=monto,
+            precio=precio, bid_optimo=bid_opt, organismo=perfil, riesgo=riesgo,
+            score_oportunidad=score, veredicto=veredicto, justificacion=justif,
+            similares=[{"codigo":s["codigo"],"titulo":s["titulo"][:70],"monto":s["monto"],"estado":s["estado"],"ratio":s.get("ratio")} for s in similares_raw[:8]],
+            generado_en=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        )
 
-    def _calcular_precio(self, monto: int, similares: List[Dict]) -> PrecioEstimado:
-        montos = [s["monto"] for s in similares if s.get("monto")]
-        if len(montos) >= 3:
-            base = int(statistics.median(montos))
-            std = statistics.stdev(montos) if len(montos) > 1 else base * 0.15
-            conf = "alta" if len(montos) >= 15 else ("media" if len(montos) >= 5 else "baja")
-        elif monto:
-            base = monto; std = monto * 0.2; conf = "baja"
+    def _calcular_precio(self, monto, similares):
+        ratios = [s["ratio"] for s in similares if s.get("ratio") and 0.3 < s["ratio"] < 1.5]
+        if len(ratios) >= 5:
+            ratio_mean = statistics.mean(ratios)
+            ratio_sigma = statistics.stdev(ratios) if len(ratios) > 1 else self._RATIO_SIGMA
+            confianza = "alta" if len(ratios) >= 30 else "media"
         else:
-            base = 1_000_000; std = 200_000; conf = "muy baja"
-        samples = [max(0, int(base + std * self._normal_sample())) for _ in range(self.N_SIM)]
-        samples.sort()
+            ratio_mean = self._RATIO_DEFAULT; ratio_sigma = self._RATIO_SIGMA; confianza = "baja"
+        base = monto or 0
+        precios_sim = sorted([int(base * max(0.2, min(1.4, ratio_mean + ratio_sigma * self._normal_sample()))) for _ in range(1000)]) if base else []
+        def pct(p):
+            return precios_sim[max(0,min(int(len(precios_sim)*p/100),len(precios_sim)-1))] if precios_sim else int(base*ratio_mean)
         return PrecioEstimado(
-            precio_base=base, precio_minimo=samples[int(0.05*self.N_SIM)],
-            precio_maximo=samples[int(0.95*self.N_SIM)],
-            ic_95_bajo=samples[int(0.025*self.N_SIM)], ic_95_alto=samples[int(0.975*self.N_SIM)],
-            desviacion=float(std), n_muestras=len(montos), confianza=conf,
+            precio_base=int(base*ratio_mean), precio_minimo=pct(10), precio_maximo=pct(90),
+            ic_95_bajo=int(base*max(0.3,ratio_mean-1.96*ratio_sigma)),
+            ic_95_alto=int(base*min(1.3,ratio_mean+1.96*ratio_sigma)),
+            ratio_historico=round(ratio_mean,3), n_muestra=len(ratios), confianza=confianza,
         )
 
-    def _optimizar_bid(self, precio: PrecioEstimado, costo: Optional[int], monto_ref: int) -> BidOptimo:
-        base = precio.precio_base
-        costo = costo or int(base * 0.75)
-        opt = max(costo + 1, int(base * 0.92))
-        margen = (opt - costo) / opt * 100 if opt else 0
-        # Heurística simple de probabilidad
-        if opt <= precio.ic_95_bajo:
-            p_win = 0.65
-        elif opt <= base:
-            p_win = 0.45
-        elif opt <= precio.ic_95_alto:
-            p_win = 0.25
+    def _optimizar_bid(self, precio, costo_propio, monto_estimado):
+        base = monto_estimado or precio.precio_base or 1
+        costo = costo_propio or int(base * 0.60)
+        lo = max(int(base*0.30), costo); hi = int(base*1.05)
+        curva = []; best_u = -1; best_p = precio.precio_base; best_prob = 0.0
+        step = max(1, (hi-lo)//50)
+        for pb in range(lo, max(lo+1, hi), step):
+            prob = max(0.0, min(1.0, (hi-pb)/(hi-lo) if hi>lo else 0.5)) ** self._COMPETIDORES_EST
+            u_esp = int((pb-costo)*prob)
+            curva.append({"precio":pb,"prob_win":round(prob,3),"utilidad":u_esp,"margen":round((pb-costo)/pb,3) if pb>0 else 0})
+            if u_esp > best_u:
+                best_u=u_esp; best_p=pb; best_prob=prob
+        margen = (best_p-costo)/best_p if best_p>0 else 0
+        return BidOptimo(precio_optimo=best_p, margen_sugerido=round(margen,3),
+            prob_ganar=round(best_prob,3), utilidad_esperada=best_u,
+            curva_precios=curva[::max(1,len(curva)//20)] if curva else [])
+
+    def _perfil_organismo(self, nombre, historial):
+        n = len(historial)
+        montos = [h["monto"] for h in historial if h.get("monto")]
+        ratios = [h["ratio"] for h in historial if h.get("ratio") and 0.3 < h["ratio"] < 1.3]
+        monto_prom = int(statistics.mean(montos)) if montos else 0
+        ratio_prom = round(statistics.mean(ratios),3) if ratios else self._RATIO_DEFAULT
+        score_pagador = min(100, int((min(n,50)/50)*40 + (1-abs(ratio_prom-0.90))*40 + 20))
+        return PerfilOrganismo(nombre=nombre or "Desconocido", total_licitaciones=n, monto_promedio=monto_prom,
+            ratio_adj_promedio=ratio_prom, categorias_frecuentes=[],
+            plazo_promedio_dias=21, score_pagador=score_pagador)
+
+    def _calcular_riesgo(self, titulo, monto, fecha_cierre, perfil, precio):
+        factores = []; score = 0
+        if fecha_cierre:
+            try:
+                fc = datetime.strptime(str(fecha_cierre)[:10], "%Y-%m-%d")
+                dias = (fc - datetime.now()).days
+                if dias < 5:
+                    factores.append({"nombre":"Plazo crítico","impacto":25,"detalle":f"Cierre en {dias} días"}); score+=25
+                elif dias < 10:
+                    factores.append({"nombre":"Plazo ajustado","impacto":12,"detalle":f"Cierre en {dias} días"}); score+=12
+            except Exception:
+                pass
+        if monto:
+            if monto < 500_000:
+                factores.append({"nombre":"Monto muy bajo","impacto":15,"detalle":"<$500K"}); score+=15
+            elif monto > 500_000_000:
+                factores.append({"nombre":"Monto muy alto","impacto":20,"detalle":">$500M"}); score+=20
         else:
-            p_win = 0.10
-        return BidOptimo(
-            precio_optimo=opt, margen_pct=round(margen, 1), probabilidad_ganar=p_win,
-            rango_agresivo=(int(base*0.85), int(base*0.95)),
-            rango_conservador=(int(base*0.95), int(base*1.05)),
+            factores.append({"nombre":"Monto desconocido","impacto":15,"detalle":"Sin monto estimado"}); score+=15
+        if precio.n_muestra < 5:
+            factores.append({"nombre":"Pocos datos históricos","impacto":15,"detalle":f"n={precio.n_muestra}"}); score+=15
+        elif precio.n_muestra < 15:
+            factores.append({"nombre":"Datos limitados","impacto":8,"detalle":f"n={precio.n_muestra}"}); score+=8
+        if perfil.score_pagador < 40:
+            factores.append({"nombre":"Organismo poco conocido","impacto":15,"detalle":"Historial limitado"}); score+=15
+        for p in ["urgente","urgencia","emergencia"]:
+            if p in (titulo or "").lower():
+                factores.append({"nombre":f"Keyword: '{p}'","impacto":10,"detalle":"Condiciones más restrictivas"}); score+=10
+                break
+        score = min(100, score)
+        nivel = "bajo" if score<25 else "medio" if score<50 else "alto" if score<75 else "crítico"
+        recs = {
+            "bajo":"Proceder con propuesta estándar.",
+            "medio":"Revisar factores antes de presentar.",
+            "alto":"Evaluar con cuidado si tienes los recursos.",
+            "crítico":"Alto riesgo — participar solo con ventaja muy clara.",
+        }
+        return RiskScore(
+            score=score, nivel=nivel,
+            factores=factores or [{"nombre":"Sin factores de riesgo","impacto":0,"detalle":""}],
+            recomendacion=recs[nivel],
         )
 
-    def _perfil_organismo(self, nombre: str, similares: List[Dict]) -> PerfilOrganismo:
-        montos = [s["monto"] for s in similares if s.get("monto")]
-        n = len(similares)
-        prom = statistics.mean(montos) if montos else None
-        if n >= 20:
-            comp = "alta"
-        elif n >= 5:
-            comp = "media"
-        else:
-            comp = "baja / datos insuficientes"
-        return PerfilOrganismo(
-            nombre=nombre or "Desconocido", total_licitaciones=n,
-            monto_promedio=prom, ratio_adj_promedio=None, competitividad=comp,
-        )
-
-    def _calcular_riesgo(self, titulo, monto, fecha_cierre, perfil, precio) -> AnalisisRiesgo:
-        factores = []
-        score = 30
-        if precio.confianza in ("baja", "muy baja"):
-            factores.append({"nombre": "Pocos datos históricos", "detalle": f"Confianza {precio.confianza}"})
-            score += 20
-        if perfil.total_licitaciones < 5:
-            factores.append({"nombre": "Organismo poco conocido en BD", "detalle": f"{perfil.total_licitaciones} registros"})
-            score += 15
-        if monto and monto > 500_000_000:
-            factores.append({"nombre": "Monto elevado", "detalle": f"${monto:,.0f}"})
-            score += 10
-        if not factores:
-            factores.append({"nombre": "Sin factores críticos detectados", "detalle": ""})
-        nivel = "alto" if score >= 60 else ("medio" if score >= 40 else "bajo")
-        return AnalisisRiesgo(nivel=nivel, score=min(score, 100), factores=factores)
-
-    def _score_oportunidad(self, precio, bid, perfil, riesgo) -> int:
-        s = 50
-        if precio.confianza == "alta":
-            s += 15
-        elif precio.confianza == "media":
-            s += 8
-        s += int(bid.probabilidad_ganar * 30)
-        s -= max(0, riesgo.score - 40) // 2
-        return max(0, min(100, s))
+    def _score_oportunidad(self, precio, bid, perfil, riesgo):
+        return min(100, int(
+            bid.prob_ganar*100*0.30 + min(bid.margen_sugerido*2,1.0)*100*0.25 +
+            {"alta":100,"media":65,"baja":30}.get(precio.confianza,30)*0.25 +
+            (100-riesgo.score)*0.20
+        ))
 
     def _veredicto(self, score, riesgo, precio, bid):
-        if score >= 70 and riesgo.nivel != "alto":
-            return "✅ Oportunidad atractiva", f"Score {score}/100. Precio sugerido: ${bid.precio_optimo:,.0f} CLP."
-        if score >= 45:
+        if score >= 65 and riesgo.nivel in ("bajo","medio"):
+            return "✅ Participar", f"Oportunidad sólida (score {score}/100). Precio óptimo: ${bid.precio_optimo:,.0f} CLP · P(ganar) {bid.prob_ganar:.0%} · Margen {bid.margen_sugerido:.0%}."
+        elif score >= 40 or riesgo.nivel == "medio":
             return "⚠️  Evaluar", f"Factores mixtos (score {score}/100). Revisar riesgos. Precio sugerido: ${bid.precio_optimo:,.0f} CLP."
         return "❌ Descartar", f"Score bajo ({score}/100) con riesgo {riesgo.nivel}. Considera otras licitaciones."
 
