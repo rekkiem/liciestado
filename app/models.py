@@ -43,7 +43,7 @@ class User(UserMixin, Base):
     fecha_registro: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     ultimo_acceso:  Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    tickets: Mapped[list["UserTicket"]]   = relationship("UserTicket", back_populates="user",
+    tickets: Mapped[list["UserTicket"]] = relationship("UserTicket", back_populates="user",
                                             cascade="all, delete-orphan")
     reglas:  Mapped[list["ReglaUsuario"]] = relationship("ReglaUsuario", back_populates="user",
                                             cascade="all, delete-orphan", lazy="dynamic")
@@ -104,36 +104,51 @@ class UserTicket(Base):
 class ReglaUsuario(Base):
     __tablename__ = "reglas_usuario"
 
-    id:              Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id:         Mapped[int]  = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
-                                       nullable=False, index=True)
-    nombre:          Mapped[str]  = mapped_column(String(120), nullable=False)
-    tipo_entidad:    Mapped[str]  = mapped_column(String(30), default="licitacion", nullable=False)
-    filtros:         Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    email_destino:   Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    activo:          Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    fecha_creacion:  Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    id:                    Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id:               Mapped[Optional[int]] = mapped_column(
+                               Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                               nullable=True, index=True)
+    nombre_regla:          Mapped[str]  = mapped_column(String(255), nullable=False)
+    activa:                Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    tipo_entidad:          Mapped[str]  = mapped_column(String(50), nullable=False)
+    filtros:               Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    email_destino:         Mapped[str]  = mapped_column(String(500), nullable=False)
+    fecha_creacion:        Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    fecha_ultima_ejecucion: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    user: Mapped["User"] = relationship("User", back_populates="reglas")
+    user:   Mapped[Optional["User"]] = relationship("User", back_populates="reglas")
+    alertas: Mapped[list["AlertaGenerada"]] = relationship("AlertaGenerada", back_populates="regla",
+                                               lazy="dynamic", cascade="all, delete-orphan")
+
+    @property
+    def emails_lista(self) -> list[str]:
+        return [e.strip() for e in self.email_destino.split(",") if e.strip()]
 
     def __repr__(self) -> str:
-        return f"<ReglaUsuario {self.nombre} user_id={self.user_id}>"
+        return f"<ReglaUsuario id={self.id} nombre='{self.nombre_regla}'>"
 
 
 class AlertaGenerada(Base):
     __tablename__ = "alertas_generadas"
+    __table_args__ = (
+        UniqueConstraint("regla_id", "entidad_id", name="uq_regla_entidad"),
+    )
 
-    id:              Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id:         Mapped[int]  = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
-                                       nullable=False, index=True)
-    regla_id:        Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("reglas_usuario.id", ondelete="SET NULL"), nullable=True)
-    entidad_id:      Mapped[str]  = mapped_column(String(64), nullable=False, index=True)
-    tipo_entidad:    Mapped[str]  = mapped_column(String(30), default="licitacion", nullable=False)
-    datos_resumen:   Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    fecha_alerta:    Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
-    enviado_email:   Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    id:               Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id:          Mapped[Optional[int]] = mapped_column(
+                          Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                          nullable=True, index=True)
+    regla_id:         Mapped[Optional[int]] = mapped_column(
+                          Integer, ForeignKey("reglas_usuario.id", ondelete="CASCADE"),
+                          nullable=True, index=True)
+    entidad_id:       Mapped[str]  = mapped_column(String(100), nullable=False, index=True)
+    tipo_entidad:     Mapped[str]  = mapped_column(String(50), nullable=False)
+    datos_resumen:    Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    fecha_alerta:     Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    enviado_email:    Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-    user: Mapped["User"] = relationship("User", back_populates="alertas")
+    user:  Mapped[Optional["User"]] = relationship("User", back_populates="alertas")
+    regla: Mapped[Optional["ReglaUsuario"]] = relationship("ReglaUsuario", back_populates="alertas")
 
     def __repr__(self) -> str:
         return f"<AlertaGenerada {self.entidad_id} user_id={self.user_id}>"
@@ -146,9 +161,10 @@ class LicitacionSnapshot(Base):
     codigo:               Mapped[str]  = mapped_column(String(64), nullable=False, index=True)
     tipo:                 Mapped[str]  = mapped_column(String(30), default="licitacion", nullable=False)
     datos:                Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    region:               Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    region:               Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     monto_clp:            Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     estado:               Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
+    fecha_publicacion:    Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
     fecha_sincronizacion: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
     def __repr__(self) -> str:
