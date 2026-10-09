@@ -53,6 +53,7 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     _migrate_add_user_id()
     _migrate_add_is_admin()
+    _migrate_alerta_schema()
     logger.info("Base de datos inicializada correctamente.")
 
 
@@ -102,3 +103,25 @@ def _migrate_add_is_admin():
                 logger.info("Migración: columna users.is_admin añadida")
         except Exception as e:
             logger.warning("Migración is_admin: %s", e)
+
+
+def _migrate_alerta_schema():
+    """Alinea alertas_generadas al schema de main: añade mostrado_dashboard si falta.
+    SQLite no puede DROP COLUMN fácilmente; tipo_entidad residual se ignora en el ORM.
+    """
+    with engine.connect() as conn:
+        try:
+            result = conn.execute(
+                __import__("sqlalchemy").text("PRAGMA table_info(alertas_generadas)")
+            )
+            cols = [row[1] for row in result.fetchall()]
+            if "mostrado_dashboard" not in cols:
+                conn.execute(
+                    __import__("sqlalchemy").text(
+                        "ALTER TABLE alertas_generadas ADD COLUMN mostrado_dashboard BOOLEAN DEFAULT 1"
+                    )
+                )
+                conn.commit()
+                logger.info("Migración: columna alertas_generadas.mostrado_dashboard añadida")
+        except Exception as e:
+            logger.warning("Migración alerta schema: %s", e)
