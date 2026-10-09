@@ -12,6 +12,9 @@ def _format_number(value):
         return value or "—"
 
 def create_app() -> Flask:
+    from app.security import check_insecure_defaults
+    check_insecure_defaults()
+
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config["SECRET_KEY"] = settings.SECRET_KEY
     app.config["WTF_CSRF_ENABLED"] = not app.config.get("TESTING", False)
