@@ -1,5 +1,15 @@
-"""app/dashboard/routes.py — Rutas del dashboard multi-tenant."""
-from __future__ import annotations
+"""
+app/dashboard/routes.py — Dashboard multi-tenant.
+
+Todas las rutas requieren login (Flask-Login).
+Todas las consultas filtran por current_user.id.
+"""
+import csv
+import io
+import json as _json
+import logging
+from datetime import datetime as _dt
+from functools import wraps
 
 from flask import (
     Blueprint, abort, flash, jsonify, redirect, render_template,
@@ -8,11 +18,13 @@ from flask import (
 from flask_login import login_required, current_user
 from sqlalchemy import cast, String, func
 
+from app.analytics import AnalyticsEngine, REGIONES_CHILE
 from app.database import get_db
-from app.models import (
-    ReglaUsuario, AlertaGenerada, LicitacionSnapshot, User,
-)
+from app.models import ReglaUsuario, AlertaGenerada, LicitacionSnapshot
+from app.filter_engine import validar_filtros, FILTROS_VALIDOS, describe_filtros
+from app.scheduler import ejecutar_regla_manualmente
 
+logger = logging.getLogger(__name__)
 bp = Blueprint("dashboard", __name__)
 
 
@@ -22,67 +34,68 @@ def _u() -> int:
 
 def _check_ticket():
     from app.auth import obtener_ticket_plano
-    return obtener_ticket_plano(_u())
+    return bool(obtener_ticket_plano(_u()))
 
 
 @bp.route("/dashboard")
 @login_required
 def home():
+    tiene_ticket = _check_ticket()
     with get_db() as db:
-        reglas = (
-            db.query(ReglaUsuario)
-            .filter_by(user_id=_u())
-            .order_by(ReglaUsuario.fecha_creacion.desc())
-            .all()
-        )
-        alertas = (
+        reglas_q = db.query(ReglaUsuario).filter_by(user_id=_u()).order_by(
+            ReglaUsuario.fecha_creacion.desc()
+        ).all()
+
+        alertas_recientes = (
             db.query(AlertaGenerada)
             .filter_by(user_id=_u())
             .order_by(AlertaGenerada.fecha_alerta.desc())
-            .limit(20)
+            .limit(5)
             .all()
         )
-        n_reglas = len(reglas)
-        n_activas = sum(1 for r in reglas if r.activa)
-        n_alertas = db.query(AlertaGenerada).filter_by(user_id=_u()).count()
-        from datetime import datetime, timedelta
-        hoy = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        n_hoy = db.query(AlertaGenerada).filter(
-            AlertaGenerada.user_id == _u(),
-            AlertaGenerada.fecha_alerta >= hoy,
-        ).count()
-        rows = [{
-            "id": r.id, "nombre": r.nombre_regla, "activa": r.activa,
-            "tipo": r.tipo_entidad, "email": r.email_destino,
-            "fecha_creacion": r.fecha_creacion,
-            "fecha_ult_exec": r.fecha_ultima_ejecucion,
-            "filtros": r.filtros or {},
-        } for r in reglas]
-        alertas_rows = [{
-            "id": a.id,
-            "entidad_id": a.entidad_id,
-            "regla_nombre": a.regla.nombre_regla if a.regla else "—",
-            "titulo": (a.datos_resumen or {}).get("titulo", a.entidad_id),
-            "monto": (a.datos_resumen or {}).get("monto_clp"),
-            "fecha_alerta": a.fecha_alerta,
-        } for a in alertas]
+
+        reglas_data = []
+        for r in reglas_q:
+            n_alertas = db.query(func.count(AlertaGenerada.id)).filter_by(
+                regla_id=r.id).scalar() or 0
+            reglas_data.append({
+                "id": r.id, "nombre": r.nombre_regla, "activa": r.activa,
+                "tipo": r.tipo_entidad, "filtros": r.filtros,
+                "email": r.email_destino,
+                "fecha_creacion": r.fecha_creacion,
+                "fecha_ult_exec": r.fecha_ultima_ejecucion,
+                "n_alertas": n_alertas,
+                "filtros_desc": describe_filtros(r.filtros) if r.filtros else "Sin filtros",
+            })
+
+        alertas_data = []
+        for a in alertas_recientes:
+            d = a.datos_resumen or {}
+            alertas_data.append({
+                "id": a.id, "regla_id": a.regla_id,
+                "regla_nombre": a.regla.nombre_regla if a.regla else "—",
+                "titulo": d.get("titulo", a.entidad_id),
+                "codigo": a.entidad_id,
+                "monto_clp": d.get("monto_clp"),
+                "fecha_alerta": a.fecha_alerta,
+                "enviado_email": a.enviado_email,
+                "tipo": d.get("tipo", "licitacion"),
+            })
+
     return render_template(
         "index.html",
-        reglas=rows,
-        alertas=alertas_rows,
-        stats={
-            "total_reglas": n_reglas,
-            "reglas_activas": n_activas,
-            "total_alertas": n_alertas,
-            "alertas_hoy": n_hoy,
-        },
+        reglas=reglas_data,
+        alertas_recientes=alertas_data,
+        tiene_ticket=tiene_ticket,
+        limite_reglas=current_user.limite_reglas,
+        es_pro=current_user.es_pro,
     )
 
 
 @bp.route("/reglas")
 @login_required
 def reglas_lista():
-    """Listado de reglas — mismo contenido que el bloque del dashboard."""
+    """Alias: el listado de reglas vive en el dashboard."""
     return home()
 
 
@@ -112,15 +125,14 @@ def regla_editar(regla_id: int):
 
 
 def _guardar_regla(regla_id):
-    import json
     nombre   = request.form.get("nombre_regla", "").strip()
     tipo     = request.form.get("tipo_entidad", "licitacion").strip()
     email    = request.form.get("email_destino", current_user.email).strip()
-    activa   = request.form.get("activa") == "on" or request.form.get("activa") == "true"
+    activa   = request.form.get("activa") in ("on", "true", "1", True)
     filtros_raw = request.form.get("filtros", "{}").strip()
     try:
-        filtros = json.loads(filtros_raw) if filtros_raw else {}
-    except json.JSONDecodeError:
+        filtros = _json.loads(filtros_raw) if filtros_raw else {}
+    except Exception:
         flash("JSON de filtros inválido.", "error")
         return redirect(request.url)
     if not nombre:
@@ -138,6 +150,11 @@ def _guardar_regla(regla_id):
             r.activa = activa
             flash("Regla actualizada.", "success")
         else:
+            # límite free
+            n = db.query(ReglaUsuario).filter_by(user_id=_u()).count()
+            if n >= current_user.limite_reglas:
+                flash("Límite de reglas alcanzado. Mejora a Pro.", "error")
+                return redirect(url_for("dashboard.home"))
             db.add(ReglaUsuario(
                 user_id=_u(), nombre_regla=nombre, tipo_entidad=tipo,
                 email_destino=email, filtros=filtros, activa=activa,
@@ -174,19 +191,24 @@ def regla_eliminar(regla_id: int):
 @bp.route("/reglas/<int:regla_id>/run", methods=["POST"])
 @login_required
 def regla_run(regla_id: int):
-    ticket = _check_ticket()
+    from app.auth import obtener_ticket_plano
+    ticket = obtener_ticket_plano(_u())
     if not ticket:
         flash("Configura tu ticket de API primero.", "error")
         return redirect(url_for("auth.configuracion"))
-    from app.scheduler import ejecutar_regla_manualmente
     try:
         stats = ejecutar_regla_manualmente(regla_id, ticket_override=ticket)
         if stats.get("error"):
             flash(stats["error"], "error")
         else:
             n = stats.get("alertas_nuevas", 0)
-            flash(f"Regla ejecutada: {n} alertas nuevas (evaluadas {stats.get('entidades_evaluadas', 0)}).", "success")
+            flash(
+                f"Regla ejecutada: {n} alertas nuevas "
+                f"(evaluadas {stats.get('entidades_evaluadas', 0)}).",
+                "success",
+            )
     except Exception as e:
+        logger.exception("Error ejecutando regla %s", regla_id)
         flash(f"Error al ejecutar: {e}", "error")
     return redirect(url_for("dashboard.home"))
 
@@ -199,7 +221,7 @@ def alertas():
     with get_db() as db:
         q = db.query(AlertaGenerada).filter_by(user_id=_u())
         total = q.count()
-        items = q.order_by(AlertaGenerada.fecha_alerta.desc()).offset((page-1)*per).limit(per).all()
+        items = q.order_by(AlertaGenerada.fecha_alerta.desc()).offset((page - 1) * per).limit(per).all()
         reglas_sel = db.query(ReglaUsuario.id, ReglaUsuario.nombre_regla).filter_by(user_id=_u()).all()
         rows = [{
             "id": a.id,
@@ -240,7 +262,6 @@ def alerta_detalle(alerta_id: int):
 @bp.route("/licitaciones")
 @login_required
 def licitaciones_browser():
-    from datetime import datetime as _dt
     q = request.args.get("q", "").strip()
     estado = request.args.get("estado", "")
     region = request.args.get("region", "")
@@ -283,7 +304,7 @@ def licitaciones_browser():
         }
         base_q = base_q.order_by(orden_map.get(orden, LicitacionSnapshot.fecha_sincronizacion.desc()))
         total = base_q.count()
-        items = base_q.offset((page-1)*pp).limit(pp).all()
+        items = base_q.offset((page - 1) * pp).limit(pp).all()
         rows = []
         for s in items:
             d = s.datos or {}
