@@ -26,12 +26,11 @@ def _payload(regla_nombre: str, entidad: Dict, user_id: int) -> Dict:
         "licitacion": {
             "codigo":   entidad.get("codigo"),
             "titulo":   entidad.get("titulo"),
-            "organismo":entidad.get("organismo"),
-            "monto_clp":entidad.get("monto_clp"),
-            "estado":   entidad.get("estado"),
+            "organismo": entidad.get("organismo"),
+            "monto_clp": entidad.get("monto_clp"),
             "region":   entidad.get("region"),
-            "fecha_cierre": entidad.get("fecha_cierre"),
-            "link":     entidad.get("link_detalle"),
+            "tipo":     entidad.get("tipo", "licitacion"),
+            "link":     entidad.get("link_detalle") or entidad.get("link"),
         },
     }
 
@@ -40,8 +39,13 @@ def _enviar_webhook(url: str, payload: Dict, user_id: int,
                     alerta_id: Optional[int] = None, max_retries: int = 3) -> bool:
     for attempt in range(max_retries):
         try:
+            from app.net_safety import validar_webhook_url
+            ok_url, msg = validar_webhook_url(url)
+            if not ok_url:
+                logger.warning("Webhook bloqueado anti-SSRF: %s (%s)", url, msg)
+                return False
             resp = _requests.post(
-                url, json=payload, timeout=10,
+                url, json=payload, timeout=10, allow_redirects=False,
                 headers={"Content-Type": "application/json", "X-LiciEstado-Event": "alerta"},
             )
             ok = 200 <= resp.status_code < 300
