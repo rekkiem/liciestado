@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Admin · Usuarios{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Usuarios registrados</h1>
+  <p class="text-muted">Panel admin — solo visible para is_admin</p>
+</div>
+
+<div class="card" style="overflow-x:auto">
+  <table class="table" style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead>
+      <tr style="text-align:left;border-bottom:1px solid var(--border)">
+        <th style="padding:8px">ID</th>
+        <th style="padding:8px">Email</th>
+        <th style="padding:8px">Nombre</th>
+        <th style="padding:8px">Plan</th>
+        <th style="padding:8px">Pro efectivo</th>
+        <th style="padding:8px">Trial hasta</th>
+        <th style="padding:8px">Reglas</th>
+        <th style="padding:8px">Activo</th>
+        <th style="padding:8px">Admin</th>
+        <th style="padding:8px">Registro</th>
+        <th style="padding:8px"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:8px">{{ u.id }}</td>
+        <td style="padding:8px">{{ u.email }}</td>
+        <td style="padding:8px">{{ u.nombre or '—' }}</td>
+        <td style="padding:8px">{{ u.plan }}</td>
+        <td style="padding:8px">{% if u.es_pro %}✅{% else %}—{% endif %}</td>
+        <td style="padding:8px">{{ u.trial_pro_hasta or '—' }}</td>
+        <td style="padding:8px">{{ u.n_reglas }}</td>
+        <td style="padding:8px">{% if u.activo %}Sí{% else %}<span style="color:var(--danger)">No</span>{% endif %}</td>
+        <td style="padding:8px">{% if u.is_admin %}🛡️{% endif %}</td>
+        <td style="padding:8px">{{ u.fecha_registro }}</td>
+        <td style="padding:8px">
+          {% if u.id != current_user.id %}
+          <form method="post" action="{{ url_for('dashboard.admin_user_toggle', user_id=u.id) }}" style="display:inline">
+            <button type="submit" class="btn btn-ghost" style="font-size:11px">
+              {% if u.activo %}Desactivar{% else %}Activar{% endif %}
+            </button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="11" style="padding:16px;color:var(--text-muted)">Sin usuarios</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
