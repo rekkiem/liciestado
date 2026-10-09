@@ -22,8 +22,6 @@ logger = logging.getLogger(__name__)
 _scheduler: Optional[BackgroundScheduler] = None
 
 
-# ── Quota tracking ─────────────────────────────────────────────────────────────
-
 def _incrementar_quota(user_id: int, n: int = 1):
     fecha = datetime.utcnow().strftime("%Y-%m-%d")
     with get_db() as db:
@@ -42,8 +40,6 @@ def _quota_disponible(user_id: int) -> int:
         return max(0, settings.API_RATE_PER_DAY - usados)
 
 
-# ── Sincronización ─────────────────────────────────────────────────────────────
-
 def _sincronizar_tipo(tipo: str, ticket: str, user_id: int, dias: int = 1) -> List[Dict]:
     from app.api_client import MercadoPublicoClient, QuotaExhaustedException
 
@@ -54,7 +50,6 @@ def _sincronizar_tipo(tipo: str, ticket: str, user_id: int, dias: int = 1) -> Li
     MAX_POR_TIPO = {"licitacion": 50_000, "orden_compra": 20_000}
     max_reg = MAX_POR_TIPO.get(tipo, 5_000)
 
-    # Respetar cuota del usuario
     disponible = _quota_disponible(user_id)
     if disponible < 10:
         logger.warning("[SYNC] user_id=%d sin cuota disponible (%d restantes)", user_id, disponible)
@@ -87,9 +82,8 @@ def _sincronizar_tipo(tipo: str, ticket: str, user_id: int, dias: int = 1) -> Li
     except QuotaExhaustedException:
         logger.error("[SYNC] Cuota API agotada para user_id=%d", user_id)
 
-    _incrementar_quota(user_id, req_count // 100 + 1)   # aproximación de requests
+    _incrementar_quota(user_id, req_count // 100 + 1)
 
-    # Persistir snapshot compartido
     if entidades_norm:
         nuevos = actualizados = 0
         with get_db() as db:
@@ -100,8 +94,10 @@ def _sincronizar_tipo(tipo: str, ticket: str, user_id: int, dias: int = 1) -> Li
                 codigo = entidad["codigo"]
                 fp = None
                 if entidad.get("fecha_publicacion"):
-                    try: fp = datetime.strptime(entidad["fecha_publicacion"], "%Y-%m-%d")
-                    except: pass
+                    try:
+                        fp = datetime.strptime(entidad["fecha_publicacion"], "%Y-%m-%d")
+                    except Exception:
+                        pass
                 if codigo in existentes:
                     db.query(LicitacionSnapshot).filter_by(codigo=codigo).update({
                         "datos": entidad, "region": entidad.get("region"),
@@ -122,14 +118,11 @@ def _sincronizar_tipo(tipo: str, ticket: str, user_id: int, dias: int = 1) -> Li
     return entidades_norm
 
 
-# ── Evaluación de reglas ────────────────────────────────────────────────────────
-
 def _evaluar_reglas_sobre_entidades(reglas, entidades, user_id, notif_mode="digest") -> Dict:
     from app.webhook_service import encolar_webhook
     alertas_nuevas = 0
     cutoff = datetime.utcnow() - timedelta(days=settings.ALERT_DEDUP_DAYS)
 
-    # Obtener webhook URL del usuario
     webhook_url = None
     with get_db() as db:
         cfg = db.query(UserConfig).filter_by(user_id=user_id).first()
@@ -147,37 +140,34 @@ def _evaluar_reglas_sobre_entidades(reglas, entidades, user_id, notif_mode="dige
                             .filter(AlertaGenerada.regla_id == regla.id,
                                     AlertaGenerada.fecha_alerta >= cutoff).all()}
 
-            nuevas_alerta = []
             for entidad in coincidencias:
                 eid = entidad.get("codigo", "")
                 if not eid or eid in ya_alertados:
                     continue
                 resumen = datos_resumen(entidad)
-                alerta = AlertaGenerada(user_id=user_id, regla_id=regla.id,
-                                        entidad_id=eid, datos_resumen=resumen, enviado_email=False)
+                alerta = AlertaGenerada(
+                    user_id=user_id,
+                    regla_id=regla.id,
+                    entidad_id=eid,
+                    tipo_entidad=regla.tipo_entidad or entidad.get("tipo") or "licitacion",
+                    datos_resumen=resumen,
+                    enviado_email=False,
+                )
                 db.add(alerta)
                 ya_alertados.add(eid)
-                nuevas_alerta.append(resumen)
                 alertas_nuevas += 1
 
-                # Webhook: siempre en tiempo real (no espera digest)
                 if webhook_url:
-                    db.flush()  # para obtener alerta.id
+                    db.flush()
                     encolar_webhook(webhook_url, regla.nombre_regla, resumen, user_id)
 
-                # Email real-time solo si el modo es realtime
                 if notif_mode == "realtime":
                     encolar_alerta(regla.nombre_regla, resumen, regla.emails_lista)
-                    # marcar email enviado
-                    db.query(AlertaGenerada).filter_by(entidad_id=eid, regla_id=regla.id
-                        ).order_by(AlertaGenerada.fecha_alerta.desc()).first()
 
             regla.fecha_ultima_ejecucion = datetime.utcnow()
 
     return {"alertas_nuevas": alertas_nuevas}
 
-
-# ── Ciclo por usuario ──────────────────────────────────────────────────────────
 
 def _ciclo_usuario(user: User, ticket: str) -> Dict:
     logger.info("[USER %d] Ciclo para %s", user.id, user.email)
@@ -207,7 +197,6 @@ def _ciclo_usuario(user: User, ticket: str) -> Dict:
                 todas[tipo] = _sincronizar_tipo(tipo, ticket, user.id, dias=1)
 
     total_alertas = 0
-    todas_nuevas: List[Dict] = []
     for tipo, entidades in todas.items():
         reglas_tipo = [r for r in reglas if r.tipo_entidad == tipo]
         if not reglas_tipo or not entidades:
@@ -215,9 +204,7 @@ def _ciclo_usuario(user: User, ticket: str) -> Dict:
         stats = _evaluar_reglas_sobre_entidades(reglas_tipo, entidades, user.id, notif_mode)
         total_alertas += stats["alertas_nuevas"]
 
-    # Digest: enviar resumen diario si hay alertas nuevas
     if notif_mode == "digest" and total_alertas > 0:
-        # Obtener las alertas recién creadas
         cutoff_hoy = datetime.utcnow() - timedelta(hours=1)
         with get_db() as db:
             alertas_hoy = db.query(AlertaGenerada).filter(
@@ -240,8 +227,6 @@ def _ciclo_usuario(user: User, ticket: str) -> Dict:
     logger.info("[USER %d] Ciclo OK: %d alertas nuevas", user.id, total_alertas)
     return {"reglas_evaluadas": len(reglas), "alertas_nuevas": total_alertas}
 
-
-# ── Ciclo completo ─────────────────────────────────────────────────────────────
 
 def ejecutar_ciclo_completo() -> Dict:
     logger.info("=" * 60)
@@ -283,8 +268,6 @@ def ejecutar_ciclo_completo() -> Dict:
     return resumen
 
 
-# ── Ejecución manual ────────────────────────────────────────────────────────────
-
 def ejecutar_regla_manualmente(regla_id: int, ticket_override: Optional[str] = None) -> Dict:
     from app.auth import obtener_ticket_plano
     with get_db() as db:
@@ -316,8 +299,6 @@ def ejecutar_regla_manualmente(regla_id: int, ticket_override: Optional[str] = N
 
     return {**stats, "entidades_evaluadas": len(entidades)}
 
-
-# ── APScheduler ────────────────────────────────────────────────────────────────
 
 def iniciar_scheduler() -> BackgroundScheduler:
     global _scheduler
