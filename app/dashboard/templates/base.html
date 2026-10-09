@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}LiciEstado{% endblock %} — LiciEstado</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0f1117;
+  --bg-card: #1a1d27;
+  --bg-hover: #242836;
+  --border: #2e3345;
+  --text: #e8eaf0;
+  --text-muted: #8b90a0;
+  --primary: #5b8def;
+  --primary-hover: #4a7ad9;
+  --success: #3ecf8e;
+  --warning: #f5a623;
+  --danger: #ef5b5b;
+  --radius: 10px;
+  --font: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --sidebar-w: 240px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+}
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.sidebar {
+  width: var(--sidebar-w);
+  min-height: 100vh;
+  background: var(--bg-card);
+  border-right: 1px solid var(--border);
+  padding: 20px 14px;
+  position: fixed;
+  left: 0; top: 0; bottom: 0;
+  overflow-y: auto;
+  z-index: 50;
+}
+.sidebar-logo {
+  font-weight: 800;
+  font-size: 18px;
+  padding: 4px 10px 18px;
+  letter-spacing: -0.3px;
+}
+.sidebar-logo span { color: var(--primary); }
+.nav-section {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 14px 10px 6px;
+}
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 13.5px;
+  font-weight: 500;
+  margin-bottom: 2px;
+  transition: background .15s, color .15s;
+  text-decoration: none !important;
+}
+.nav-item:hover, .nav-item.active {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.nav-icon { font-size: 16px; width: 22px; text-align: center; }
+.sidebar-plan {
+  margin-top: 24px;
+  padding: 12px;
+  background: var(--bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+.sidebar-plan .plan-name {
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: .5px;
+  color: var(--primary);
+  margin-bottom: 4px;
+}
+.main {
+  margin-left: var(--sidebar-w);
+  flex: 1;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.topbar {
+  padding: 16px 28px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-card);
+}
+.topbar h1 { font-size: 18px; font-weight: 700; }
+.content { padding: 24px 28px; flex: 1; }
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font);
+  transition: background .15s;
+}
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.btn-ghost:hover { background: var(--bg-hover); color: var(--text); }
+.btn-danger { background: var(--danger); color: #fff; }
+.flash {
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+.flash-success { background: rgba(62,207,142,.12); color: var(--success); border: 1px solid rgba(62,207,142,.3); }
+.flash-error { background: rgba(239,91,91,.12); color: var(--danger); border: 1px solid rgba(239,91,91,.3); }
+.flash-info { background: rgba(91,141,239,.12); color: var(--primary); border: 1px solid rgba(91,141,239,.3); }
+.page-header { margin-bottom: 20px; }
+.page-header h1 { font-size: 22px; font-weight: 800; margin-bottom: 4px; }
+.text-muted { color: var(--text-muted); font-size: 13px; }
+input, select, textarea {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+label { font-size: 12px; color: var(--text-muted); font-weight: 500; }
+@media (max-width: 768px) {
+  .sidebar { transform: translateX(-100%); }
+  .main { margin-left: 0; }
+}
+</style>
+{% block extra_head %}{% endblock %}
+</head>
+<body>
+<aside class="sidebar">
+  <div class="sidebar-logo"><span>Lici</span>Estado</div>
+
+  <div class="nav-section">Principal</div>
+  <a class="nav-item" href="/dashboard">
+    <span class="nav-icon">🏠</span> Dashboard
+  </a>
+  <a class="nav-item" href="/reglas">
+    <span class="nav-icon">📋</span> Reglas
+  </a>
+  <a class="nav-item" href="/alertas">
+    <span class="nav-icon">🔔</span> Alertas
+  </a>
+  <a class="nav-item" href="/licitaciones">
+    <span class="nav-icon">📂</span> Licitaciones
+  </a>
+  <a class="nav-item" href="/analytics">
+    <span class="nav-icon">📊</span> Analytics
+  </a>
+
+  <div class="nav-section">Cuenta</div>
+  <a class="nav-item" href="/configuracion">
+    <span class="nav-icon">⚙️</span> Configuración
+  </a>
+  <a class="nav-item" href="/upgrade">
+    <span class="nav-icon">⭐</span> Planes
+  </a>
+
+  {% if current_user.is_authenticated and current_user.is_admin %}
+  <div class="nav-section">ADMIN</div>
+  <a class="nav-item" href="/admin/users">
+    <span class="nav-icon">🛡️</span> Usuarios
+  </a>
+  {% endif %}
+
+  <div class="sidebar-plan">
+    <div class="plan-name">PLAN ACTUAL</div>
+    <div>{% if current_user.is_authenticated %}{{ current_user.plan|upper }}{% if current_user.es_pro %} · Pro{% endif %}{% else %}—{% endif %}</div>
+  </div>
+
+  <div style="margin-top:16px;padding:0 10px">
+    <a class="nav-item" href="/logout" style="color:var(--danger)">
+      <span class="nav-icon">🚪</span> Salir
+    </a>
+  </div>
+</aside>
+
+<div class="main">
+  <div class="topbar">
+    <h1>{% block topbar_title %}Dashboard{% endblock %}</h1>
+    <div style="font-size:13px;color:var(--text-muted)">
+      {% if current_user.is_authenticated %}{{ current_user.email }}{% endif %}
+    </div>
+  </div>
+  <div class="content">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </div>
+</div>
+{% block extra_js %}{% endblock %}
+</body>
+</html>
