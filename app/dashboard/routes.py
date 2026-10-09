@@ -437,16 +437,28 @@ def licitacion_detalle(snap_id: int):
 @bp.route("/licitaciones/<int:snap_id>/analizar")
 @login_required
 def licitacion_analizar(snap_id: int):
+    if not current_user.es_pro:
+        return render_template("pro_required.html", feature="Bid Analyzer")
+
     from app.bid_analyzer import bid_analyzer
-    costo = request.args.get("costo")
+    costo_str = request.args.get("costo", "").strip()
+    costo = int(costo_str) if costo_str.isdigit() else None
     try:
-        costo = int(costo) if costo else None
-    except ValueError:
-        costo = None
-    analisis = bid_analyzer.analizar(snap_id, costo_propio=costo)
+        analisis = bid_analyzer.analizar(snap_id, costo_propio=costo)
+    except Exception as e:
+        logger.exception("Error en bid analyzer snap_id=%s", snap_id)
+        flash(f"No se pudo analizar: {e}", "error")
+        return redirect(url_for("dashboard.licitacion_detalle", snap_id=snap_id))
     if not analisis:
         abort(404)
-    return render_template("licitacion_analisis.html", a=analisis)
+    curva_json = _json.dumps(getattr(analisis.bid_optimo, "curva_precios", []) or [])
+    return render_template(
+        "licitacion_analisis.html",
+        a=analisis,
+        curva_json=curva_json,
+        costo_input=costo or "",
+        snap_id=snap_id,
+    )
 
 
 @bp.route("/analytics")
