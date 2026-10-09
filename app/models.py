@@ -21,7 +21,7 @@ from sqlalchemy import (
     Boolean, DateTime, ForeignKey, Integer, JSON,
     String, Text, UniqueConstraint, func,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, backref
 
 from app.database import Base
 
@@ -29,6 +29,10 @@ from app.database import Base
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# USER
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class User(UserMixin, Base):
     __tablename__ = "users"
@@ -38,18 +42,21 @@ class User(UserMixin, Base):
     password_hash:  Mapped[str]  = mapped_column(String(255), nullable=False)
     nombre:         Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     plan:           Mapped[str]  = mapped_column(String(30), default="free", nullable=False)
+    # free | pro | enterprise
     activo:         Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_admin:       Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     fecha_registro: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     ultimo_acceso:  Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    tickets: Mapped[list["UserTicket"]] = relationship("UserTicket", back_populates="user",
+    # Relaciones
+    tickets: Mapped[list[UserTicket]]   = relationship("UserTicket", back_populates="user",
                                             cascade="all, delete-orphan")
-    reglas:  Mapped[list["ReglaUsuario"]] = relationship("ReglaUsuario", back_populates="user",
+    reglas:  Mapped[list[ReglaUsuario]] = relationship("ReglaUsuario", back_populates="user",
                                             cascade="all, delete-orphan", lazy="dynamic")
-    alertas: Mapped[list["AlertaGenerada"]] = relationship("AlertaGenerada", back_populates="user",
+    alertas: Mapped[list[AlertaGenerada]] = relationship("AlertaGenerada", back_populates="user",
                                             cascade="all, delete-orphan", lazy="dynamic")
 
+    # Flask-Login requiere get_id() → retorna str
     def get_id(self) -> str:
         return str(self.id)
 
@@ -59,18 +66,15 @@ class User(UserMixin, Base):
 
     @property
     def es_pro(self) -> bool:
-        """Pro permanente o trial activo (trial_pro_hasta en UserConfig)."""
+        """Pro permanente o trial activo (trial_pro_hasta en UserConfig via backref)."""
         if self.plan in ("pro", "enterprise"):
             return True
-        try:
-            from app.database import get_db
-            from datetime import datetime
-            with get_db() as db:
-                cfg = db.query(UserConfig).filter_by(user_id=self.id).first()
-                if cfg and cfg.trial_pro_hasta and cfg.trial_pro_hasta > datetime.utcnow():
-                    return True
-        except Exception:
-            pass
+        cfg = getattr(self, "config", None)
+        if cfg is not None and cfg.trial_pro_hasta is not None:
+            hasta = cfg.trial_pro_hasta
+            if hasta.tzinfo is None:
+                hasta = hasta.replace(tzinfo=timezone.utc)
+            return hasta > datetime.now(timezone.utc)
         return False
 
     @property
@@ -80,6 +84,10 @@ class User(UserMixin, Base):
     def __repr__(self) -> str:
         return f"<User {self.email} plan={self.plan}>"
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# USER TICKET
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class UserTicket(Base):
     __tablename__ = "user_tickets"
@@ -91,7 +99,7 @@ class UserTicket(Base):
     activo:          Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     fecha_creacion:  Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
-    user: Mapped["User"] = relationship("User", back_populates="tickets")
+    user: Mapped[User] = relationship("User", back_populates="tickets")
 
     def get_ticket(self) -> str:
         from app.crypto import descifrar_ticket
@@ -100,6 +108,10 @@ class UserTicket(Base):
     def __repr__(self) -> str:
         return f"<UserTicket user_id={self.user_id} activo={self.activo}>"
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# REGLA USUARIO
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class ReglaUsuario(Base):
     __tablename__ = "reglas_usuario"
@@ -116,8 +128,8 @@ class ReglaUsuario(Base):
     fecha_creacion:        Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     fecha_ultima_ejecucion: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    user:   Mapped[Optional["User"]] = relationship("User", back_populates="reglas")
-    alertas: Mapped[list["AlertaGenerada"]] = relationship("AlertaGenerada", back_populates="regla",
+    user:   Mapped[Optional[User]]         = relationship("User", back_populates="reglas")
+    alertas: Mapped[list[AlertaGenerada]]  = relationship("AlertaGenerada", back_populates="regla",
                                                lazy="dynamic", cascade="all, delete-orphan")
 
     @property
@@ -127,6 +139,10 @@ class ReglaUsuario(Base):
     def __repr__(self) -> str:
         return f"<ReglaUsuario id={self.id} nombre='{self.nombre_regla}'>"
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ALERTA GENERADA
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class AlertaGenerada(Base):
     __tablename__ = "alertas_generadas"
@@ -138,83 +154,107 @@ class AlertaGenerada(Base):
     user_id:          Mapped[Optional[int]] = mapped_column(
                           Integer, ForeignKey("users.id", ondelete="CASCADE"),
                           nullable=True, index=True)
-    regla_id:         Mapped[Optional[int]] = mapped_column(
-                          Integer, ForeignKey("reglas_usuario.id", ondelete="CASCADE"),
-                          nullable=True, index=True)
-    entidad_id:       Mapped[str]  = mapped_column(String(100), nullable=False, index=True)
-    tipo_entidad:     Mapped[str]  = mapped_column(String(50), nullable=False)
-    datos_resumen:    Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    fecha_alerta:     Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    regla_id:         Mapped[int]  = mapped_column(Integer,
+                          ForeignKey("reglas_usuario.id", ondelete="CASCADE"), nullable=False)
+    entidad_id:       Mapped[str]  = mapped_column(String(150), nullable=False, index=True)
+    datos_resumen:    Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    fecha_alerta:     Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
     enviado_email:    Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    mostrado_dashboard: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    user:  Mapped[Optional["User"]] = relationship("User", back_populates="alertas")
-    regla: Mapped[Optional["ReglaUsuario"]] = relationship("ReglaUsuario", back_populates="alertas")
+    user:  Mapped[Optional[User]]  = relationship("User", back_populates="alertas")
+    regla: Mapped[ReglaUsuario]    = relationship("ReglaUsuario", back_populates="alertas")
 
     def __repr__(self) -> str:
-        return f"<AlertaGenerada {self.entidad_id} user_id={self.user_id}>"
+        return f"<AlertaGenerada id={self.id} entidad='{self.entidad_id}'>"
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LICITACION SNAPSHOT (compartido — caché pública)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class LicitacionSnapshot(Base):
     __tablename__ = "licitaciones_snapshot"
 
-    id:                   Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
-    codigo:               Mapped[str]  = mapped_column(String(64), nullable=False, index=True)
-    tipo:                 Mapped[str]  = mapped_column(String(30), default="licitacion", nullable=False)
-    datos:                Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    region:               Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    monto_clp:            Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    estado:               Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
-    fecha_publicacion:    Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
-    fecha_sincronizacion: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    id:                  Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
+    codigo:              Mapped[str]  = mapped_column(String(50), unique=True, nullable=False, index=True)
+    tipo:                Mapped[str]  = mapped_column(String(30), default="licitacion", nullable=False)
+    datos:               Mapped[dict] = mapped_column(JSON, nullable=False)
+    fecha_publicacion:   Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    estado:              Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    region:              Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    monto_clp:           Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    fecha_sincronizacion: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
     def __repr__(self) -> str:
-        return f"<LicitacionSnapshot {self.codigo}>"
+        return f"<LicitacionSnapshot codigo='{self.codigo}'>"
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# USER CONFIG — preferencias de notificación por usuario
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class UserConfig(Base):
+    """Configuración de notificaciones y preferencias por usuario."""
     __tablename__ = "user_configs"
 
     id:              Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:         Mapped[int]  = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
                                        nullable=False, unique=True)
-    notif_mode:      Mapped[str]  = mapped_column(String(30), default="digest", nullable=False)
-    webhook_url:     Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # Modo de notificación: "realtime" (email por alerta) | "digest" (resumen diario)
+    notif_mode:      Mapped[str]  = mapped_column(String(20), default="digest", nullable=False)
+    digest_hora:     Mapped[int]  = mapped_column(Integer, default=8, nullable=False)  # hora UTC
+    # Webhook global del usuario (opcional)
+    webhook_url:     Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     webhook_activo:  Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Trial Pro
     trial_pro_hasta: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Notif por dashboard (siempre True por defecto)
     notif_dashboard: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    user: Mapped["User"] = relationship("User", backref="config", uselist=False)
+    user: Mapped["User"] = relationship("User", backref=backref("config", uselist=False))
 
     def __repr__(self) -> str:
         return f"<UserConfig user_id={self.user_id} mode={self.notif_mode}>"
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# WEBHOOK LOG — registro de envíos de webhook
+# ═══════════════════════════════════════════════════════════════════════════════
+
 class WebhookLog(Base):
     __tablename__ = "webhook_logs"
 
     id:           Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id:      Mapped[int]  = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id:      Mapped[int]  = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                                   nullable=False, index=True)
     alerta_id:    Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     url:          Mapped[str]  = mapped_column(String(512), nullable=False)
     status_code:  Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     ok:           Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    intentos:     Mapped[int]  = mapped_column(Integer, default=0, nullable=False)
+    intentos:     Mapped[int]  = mapped_column(Integer, default=1, nullable=False)
     payload_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    creado_en:    Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    fecha_envio:  Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
     def __repr__(self) -> str:
-        return f"<WebhookLog user_id={self.user_id} ok={self.ok}>"
+        return f"<WebhookLog user={self.user_id} ok={self.ok}>"
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# API QUOTA LOG
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class ApiQuotaLog(Base):
     __tablename__ = "api_quota_logs"
+
+    id:         Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id:    Mapped[int]  = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                                  nullable=False, index=True)
+    fecha:      Mapped[str]  = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
+    requests:   Mapped[int]  = mapped_column(Integer, default=0, nullable=False)
+    creado_en:  Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+
     __table_args__ = (UniqueConstraint("user_id", "fecha", name="uq_quota_user_fecha"),)
 
-    id:        Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id:   Mapped[int]  = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    fecha:     Mapped[str]  = mapped_column(String(10), nullable=False)
-    requests:  Mapped[int]  = mapped_column(Integer, default=0, nullable=False)
-    limite:    Mapped[int]  = mapped_column(Integer, default=10000, nullable=False)
-
     def __repr__(self) -> str:
-        return f"<ApiQuotaLog user_id={self.user_id} fecha={self.fecha} req={self.requests}>"
+        return f"<ApiQuotaLog user={self.user_id} fecha={self.fecha} req={self.requests}>"
