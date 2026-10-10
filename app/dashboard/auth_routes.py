@@ -32,16 +32,12 @@ logger = logging.getLogger(__name__)
 bp = Blueprint("auth", __name__)
 
 
-# ── Landing pública ───────────────────────────────────────────────────────────
-
 @bp.route("/landing")
 def landing():
     if current_user.is_authenticated:
         return redirect(url_for("dashboard.home"))
     return render_template("auth/landing.html")
 
-
-# ── Login ─────────────────────────────────────────────────────────────────────
 
 @bp.route("/login", methods=["GET", "POST"])
 def login():
@@ -67,8 +63,6 @@ def login():
     return render_template("auth/login.html")
 
 
-# ── Registro ──────────────────────────────────────────────────────────────────
-
 @bp.route("/register", methods=["GET", "POST"])
 def register():
     if current_user.is_authenticated:
@@ -87,13 +81,12 @@ def register():
         try:
             user = registrar_usuario(email, password, nombre)
             login_user(user, remember=True)
-            # Crear config por defecto + trial Pro 14 días (plan base = free)
             from app.models import UserConfig
             trial_hasta = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=14)
             with get_db() as db:
                 db.add(UserConfig(user_id=user.id, notif_mode="digest",
                                   trial_pro_hasta=trial_hasta))
-                db.query(User).filter_by(id=user.id).update({"plan": "free"})  # base free; Pro via trial_pro_hasta
+                db.query(User).filter_by(id=user.id).update({"plan": "free"})
             flash("¡Cuenta creada! 🎉 Tienes 14 días de Plan Pro de prueba. Ahora configura tu ticket de Mercado Público.", "success")
             return redirect(url_for("auth.onboarding"))
         except EmailYaRegistrado:
@@ -104,8 +97,6 @@ def register():
     return render_template("auth/register.html")
 
 
-# ── Logout ────────────────────────────────────────────────────────────────────
-
 @bp.route("/logout")
 @login_required
 def logout():
@@ -113,8 +104,6 @@ def logout():
     flash("Sesión cerrada correctamente.", "info")
     return redirect(url_for("auth.landing"))
 
-
-# ── Configuración ─────────────────────────────────────────────────────────────
 
 @bp.route("/configuracion")
 @login_required
@@ -159,7 +148,6 @@ def configuracion_ticket():
         flash("El ticket no puede estar vacío.", "error")
         return redirect(url_for("auth.configuracion"))
 
-    # Validar contra la API real
     valido, mensaje = validar_ticket_api(ticket)
     if not valido:
         flash(f"Ticket inválido: {mensaje}", "error")
@@ -186,8 +174,6 @@ def configuracion_password():
     return redirect(url_for("auth.configuracion"))
 
 
-# ── Upgrade plan (simulado) ───────────────────────────────────────────────────
-
 @bp.route("/upgrade")
 @login_required
 def upgrade():
@@ -197,13 +183,8 @@ def upgrade():
 @bp.route("/upgrade/<plan>", methods=["POST"])
 @login_required
 def upgrade_plan(plan: str):
-    """Simulación de upgrade. NO hay cobro real todavía.
-    En producción se reemplazará por Mercado Pago / pasarela.
-    """
     if plan not in ("pro", "free"):
         abort(400)
-    # Solo permite bajar a free; subir a pro permanente requiere pago real.
-    # Mientras no haya pasarela, el acceso Pro se otorga solo vía trial_pro_hasta.
     if plan == "pro":
         flash(
             "El upgrade a Pro permanente aún no está habilitado (falta integración de pagos). "
@@ -216,8 +197,6 @@ def upgrade_plan(plan: str):
     flash("Plan cambiado a Free.", "success")
     return redirect(url_for("auth.configuracion"))
 
-
-# ── Planes ────────────────────────────────────────────────────────────────────
 
 _PLANES = {
     "free": {
@@ -248,8 +227,6 @@ _PLANES = {
 }
 
 
-# ── Onboarding wizard (3 pasos) ──────────────────────────────────────────────
-
 @bp.route("/onboarding")
 @login_required
 def onboarding():
@@ -262,38 +239,19 @@ def onboarding():
         tiene_ticket=tiene_ticket, n_reglas=n_reglas)
 
 
-# ── Configuración webhook ────────────────────────────────────────────────────
-
 @bp.route("/configuracion/webhook", methods=["POST"])
 @login_required
 def configuracion_webhook():
     from app.models import UserConfig
-    from urllib.parse import urlparse
+    from app.net_safety import validar_webhook_url
     url    = request.form.get("webhook_url", "").strip()
     activo = request.form.get("webhook_activo") == "1"
     modo   = request.form.get("notif_mode", "digest")
 
-    # Validación anti-SSRF básica: solo https, hosts públicos
     if url:
-        parsed = urlparse(url)
-        if parsed.scheme != "https":
-            flash("El webhook debe usar HTTPS.", "error")
-            return redirect(url_for("auth.configuracion"))
-        host = (parsed.hostname or "").lower()
-        blocked = (
-            host in ("localhost", "127.0.0.1", "0.0.0.0", "::1")
-            or host.endswith(".local")
-            or host.endswith(".internal")
-            or host.startswith("10.")
-            or host.startswith("192.168.")
-            or host.startswith("172.")
-            or not host
-        )
-        if blocked:
-            flash("URL de webhook no permitida (host interno o inválido).", "error")
-            return redirect(url_for("auth.configuracion"))
-        if len(url) > 500:
-            flash("URL de webhook demasiado larga.", "error")
+        ok, msg = validar_webhook_url(url)
+        if not ok:
+            flash(f"URL de webhook no permitida: {msg}", "error")
             return redirect(url_for("auth.configuracion"))
 
     with get_db() as db:
@@ -308,8 +266,6 @@ def configuracion_webhook():
     flash("Configuración de notificaciones guardada.", "success")
     return redirect(url_for("auth.configuracion"))
 
-
-# ── Export alertas propias como CSV ─────────────────────────────────────────
 
 @bp.route("/alertas/export.csv")
 @login_required
