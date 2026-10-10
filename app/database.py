@@ -54,6 +54,7 @@ def init_db():
     _migrate_add_user_id()
     _migrate_add_is_admin()
     _migrate_alerta_schema()
+    _migrate_user_config_schema()
     logger.info("Base de datos inicializada correctamente.")
 
 
@@ -125,3 +126,39 @@ def _migrate_alerta_schema():
                 logger.info("Migración: columna alertas_generadas.mostrado_dashboard añadida")
         except Exception as e:
             logger.warning("Migración alerta schema: %s", e)
+
+
+def _migrate_user_config_schema():
+    """Añade columnas faltantes en user_configs (p.ej. digest_hora tras restore desde main)."""
+    with engine.connect() as conn:
+        try:
+            result = conn.execute(
+                __import__("sqlalchemy").text("PRAGMA table_info(user_configs)")
+            )
+            cols = [row[1] for row in result.fetchall()]
+            if not cols:
+                return  # tabla aún no existe; create_all la crea completa
+            adds = []
+            if "digest_hora" not in cols:
+                adds.append(("digest_hora", "INTEGER DEFAULT 8"))
+            if "notif_dashboard" not in cols:
+                adds.append(("notif_dashboard", "BOOLEAN DEFAULT 1"))
+            if "trial_pro_hasta" not in cols:
+                adds.append(("trial_pro_hasta", "DATETIME"))
+            if "webhook_url" not in cols:
+                adds.append(("webhook_url", "VARCHAR(512)"))
+            if "webhook_activo" not in cols:
+                adds.append(("webhook_activo", "BOOLEAN DEFAULT 0"))
+            if "notif_mode" not in cols:
+                adds.append(("notif_mode", "VARCHAR(20) DEFAULT 'digest'"))
+            for name, typedef in adds:
+                conn.execute(
+                    __import__("sqlalchemy").text(
+                        f"ALTER TABLE user_configs ADD COLUMN {name} {typedef}"
+                    )
+                )
+                logger.info("Migración: columna user_configs.%s añadida", name)
+            if adds:
+                conn.commit()
+        except Exception as e:
+            logger.warning("Migración user_config schema: %s", e)
