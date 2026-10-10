@@ -30,10 +30,6 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# USER
-# ═══════════════════════════════════════════════════════════════════════════════
-
 class User(UserMixin, Base):
     __tablename__ = "users"
 
@@ -42,21 +38,18 @@ class User(UserMixin, Base):
     password_hash:  Mapped[str]  = mapped_column(String(255), nullable=False)
     nombre:         Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     plan:           Mapped[str]  = mapped_column(String(30), default="free", nullable=False)
-    # free | pro | enterprise
     activo:         Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_admin:       Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     fecha_registro: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     ultimo_acceso:  Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    # Relaciones
-    tickets: Mapped[list[UserTicket]]   = relationship("UserTicket", back_populates="user",
+    tickets: Mapped[list["UserTicket"]] = relationship("UserTicket", back_populates="user",
                                             cascade="all, delete-orphan")
-    reglas:  Mapped[list[ReglaUsuario]] = relationship("ReglaUsuario", back_populates="user",
+    reglas:  Mapped[list["ReglaUsuario"]] = relationship("ReglaUsuario", back_populates="user",
                                             cascade="all, delete-orphan", lazy="dynamic")
-    alertas: Mapped[list[AlertaGenerada]] = relationship("AlertaGenerada", back_populates="user",
+    alertas: Mapped[list["AlertaGenerada"]] = relationship("AlertaGenerada", back_populates="user",
                                             cascade="all, delete-orphan", lazy="dynamic")
 
-    # Flask-Login requiere get_id() → retorna str
     def get_id(self) -> str:
         return str(self.id)
 
@@ -66,16 +59,20 @@ class User(UserMixin, Base):
 
     @property
     def es_pro(self) -> bool:
-        """Pro permanente o trial activo (trial_pro_hasta en UserConfig via backref)."""
+        """Pro permanente o trial activo (trial_pro_hasta en UserConfig).
+        Usa solo datos ya cargados (joinedload en user_loader); no abre sesión.
+        """
         if self.plan in ("pro", "enterprise"):
             return True
-        cfg = getattr(self, "config", None)
-        if cfg is not None and cfg.trial_pro_hasta is not None:
-            hasta = cfg.trial_pro_hasta
-            if hasta.tzinfo is None:
-                hasta = hasta.replace(tzinfo=timezone.utc)
-            return hasta > datetime.now(timezone.utc)
-        return False
+        cfg = self.__dict__.get("config", None)
+        if cfg is None:
+            return False
+        hasta = getattr(cfg, "trial_pro_hasta", None)
+        if hasta is None:
+            return False
+        if hasta.tzinfo is None:
+            hasta = hasta.replace(tzinfo=timezone.utc)
+        return hasta > datetime.now(timezone.utc)
 
     @property
     def limite_reglas(self) -> int:
@@ -84,10 +81,6 @@ class User(UserMixin, Base):
     def __repr__(self) -> str:
         return f"<User {self.email} plan={self.plan}>"
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# USER TICKET
-# ═══════════════════════════════════════════════════════════════════════════════
 
 class UserTicket(Base):
     __tablename__ = "user_tickets"
@@ -109,10 +102,6 @@ class UserTicket(Base):
         return f"<UserTicket user_id={self.user_id} activo={self.activo}>"
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# REGLA USUARIO
-# ═══════════════════════════════════════════════════════════════════════════════
-
 class ReglaUsuario(Base):
     __tablename__ = "reglas_usuario"
 
@@ -129,7 +118,7 @@ class ReglaUsuario(Base):
     fecha_ultima_ejecucion: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     user:   Mapped[Optional[User]]         = relationship("User", back_populates="reglas")
-    alertas: Mapped[list[AlertaGenerada]]  = relationship("AlertaGenerada", back_populates="regla",
+    alertas: Mapped[list["AlertaGenerada"]]  = relationship("AlertaGenerada", back_populates="regla",
                                                lazy="dynamic", cascade="all, delete-orphan")
 
     @property
@@ -139,10 +128,6 @@ class ReglaUsuario(Base):
     def __repr__(self) -> str:
         return f"<ReglaUsuario id={self.id} nombre='{self.nombre_regla}'>"
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ALERTA GENERADA
-# ═══════════════════════════════════════════════════════════════════════════════
 
 class AlertaGenerada(Base):
     __tablename__ = "alertas_generadas"
@@ -169,10 +154,6 @@ class AlertaGenerada(Base):
         return f"<AlertaGenerada id={self.id} entidad='{self.entidad_id}'>"
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# LICITACION SNAPSHOT (compartido — caché pública)
-# ═══════════════════════════════════════════════════════════════════════════════
-
 class LicitacionSnapshot(Base):
     __tablename__ = "licitaciones_snapshot"
 
@@ -190,10 +171,6 @@ class LicitacionSnapshot(Base):
         return f"<LicitacionSnapshot codigo='{self.codigo}'>"
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# USER CONFIG — preferencias de notificación por usuario
-# ═══════════════════════════════════════════════════════════════════════════════
-
 class UserConfig(Base):
     """Configuración de notificaciones y preferencias por usuario."""
     __tablename__ = "user_configs"
@@ -201,15 +178,11 @@ class UserConfig(Base):
     id:              Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:         Mapped[int]  = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
                                        nullable=False, unique=True)
-    # Modo de notificación: "realtime" (email por alerta) | "digest" (resumen diario)
     notif_mode:      Mapped[str]  = mapped_column(String(20), default="digest", nullable=False)
-    digest_hora:     Mapped[int]  = mapped_column(Integer, default=8, nullable=False)  # hora UTC
-    # Webhook global del usuario (opcional)
+    digest_hora:     Mapped[int]  = mapped_column(Integer, default=8, nullable=False)
     webhook_url:     Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     webhook_activo:  Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    # Trial Pro
     trial_pro_hasta: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    # Notif por dashboard (siempre True por defecto)
     notif_dashboard: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     user: Mapped["User"] = relationship("User", backref=backref("config", uselist=False))
@@ -217,10 +190,6 @@ class UserConfig(Base):
     def __repr__(self) -> str:
         return f"<UserConfig user_id={self.user_id} mode={self.notif_mode}>"
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# WEBHOOK LOG — registro de envíos de webhook
-# ═══════════════════════════════════════════════════════════════════════════════
 
 class WebhookLog(Base):
     __tablename__ = "webhook_logs"
@@ -240,17 +209,13 @@ class WebhookLog(Base):
         return f"<WebhookLog user={self.user_id} ok={self.ok}>"
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# API QUOTA LOG
-# ═══════════════════════════════════════════════════════════════════════════════
-
 class ApiQuotaLog(Base):
     __tablename__ = "api_quota_logs"
 
     id:         Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:    Mapped[int]  = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
                                   nullable=False, index=True)
-    fecha:      Mapped[str]  = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
+    fecha:      Mapped[str]  = mapped_column(String(10), nullable=False)
     requests:   Mapped[int]  = mapped_column(Integer, default=0, nullable=False)
     creado_en:  Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
