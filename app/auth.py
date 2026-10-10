@@ -94,7 +94,6 @@ def guardar_ticket(user_id: int, ticket_plano: str) -> UserTicket:
     """
     cifrado = cifrar_ticket(ticket_plano.strip())
     with get_db() as db:
-        # Desactivar tickets anteriores
         db.query(UserTicket).filter_by(user_id=user_id, activo=True).update({"activo": False})
         nuevo = UserTicket(user_id=user_id, ticket_cifrado=cifrado, activo=True)
         db.add(nuevo)
@@ -147,13 +146,19 @@ def validar_ticket_api(ticket: str) -> tuple[bool, str]:
 # ── Flask-Login loader ────────────────────────────────────────────────────────
 
 def cargar_usuario(user_id: str) -> Optional[User]:
-    """Cargador para Flask-Login."""
+    """Cargador para Flask-Login. Carga UserConfig (joinedload) para evitar DetachedInstanceError en es_pro."""
     try:
         uid = int(user_id)
     except (ValueError, TypeError):
         return None
+    from sqlalchemy.orm import joinedload
     with get_db() as db:
-        return db.query(User).filter_by(id=uid, activo=True).first()
+        return (
+            db.query(User)
+            .options(joinedload(User.config))
+            .filter_by(id=uid, activo=True)
+            .first()
+        )
 
 
 # ── Cambio de contraseña ──────────────────────────────────────────────────────
