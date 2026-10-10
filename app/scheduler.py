@@ -140,21 +140,17 @@ def _evaluar_reglas_sobre_entidades(reglas, entidades, user_id, notif_mode="dige
                             .filter(AlertaGenerada.regla_id == regla.id,
                                     AlertaGenerada.fecha_alerta >= cutoff).all()}
 
+            nuevas_alerta = []
             for entidad in coincidencias:
                 eid = entidad.get("codigo", "")
                 if not eid or eid in ya_alertados:
                     continue
                 resumen = datos_resumen(entidad)
-                alerta = AlertaGenerada(
-                    user_id=user_id,
-                    regla_id=regla.id,
-                    entidad_id=eid,
-                    tipo_entidad=regla.tipo_entidad or entidad.get("tipo") or "licitacion",
-                    datos_resumen=resumen,
-                    enviado_email=False,
-                )
+                alerta = AlertaGenerada(user_id=user_id, regla_id=regla.id,
+                                        entidad_id=eid, datos_resumen=resumen, enviado_email=False)
                 db.add(alerta)
                 ya_alertados.add(eid)
+                nuevas_alerta.append(resumen)
                 alertas_nuevas += 1
 
                 if webhook_url:
