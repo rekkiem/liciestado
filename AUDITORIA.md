@@ -1,36 +1,33 @@
-# Auditoría LiciEstado — Fase 0 (en curso)
+# Auditoría LiciEstado — Fase 0 (lista para merge)
 
 Rama: `fase0/saneamiento-critico`  
-Estado: **no cerrada** — pendiente de aprobación del arquitecto y merge a `main`.
+Estado: **lista para merge a main** tras validación local (dashboard / reglas / alertas / licitaciones / analizar → 200).
 
-## Hallazgos → commits (post-revisión arquitecto rev3)
+## Checklist Arquitecto
 
-| ID | Descripción | Commit | Test | Resultado |
-|----|-------------|--------|------|-----------|
-| C2/A2 | models/scheduler from main + is_admin + es_pro relationship | 3335c18 | test_models_fase0.py | 7 passed |
-| C1 | routes.py from origin/main + flash + /reglas + admin only | a602576 | (diff-only vs main) | APIs restauradas |
-| C3/C4/C5/A1 | net_safety wiring, webhook worker, RuntimeError prod, delete restore_hotfix | 7aa5bda | test_webhook_validation + test_security_defaults | 29 passed total |
+| ID | Descripción | Estado |
+|----|-------------|--------|
+| C1 | routes + `/reglas` + `/admin/users` | OK (UI); APIs analytics en rama |
+| C2 | models/scheduler alineados; sin `tipo_entidad` en AlertaGenerada | OK |
+| C3 | `net_safety` en config webhook + revalidación al enviar | OK |
+| C4 | worker webhook en `main.py` | OK |
+| C5 | `check_insecure_defaults` (RuntimeError en production) | OK |
+| A1 | `restore_hotfix.py` eliminado | OK |
+| A2 | `es_pro` sin get_db/lazy; `joinedload` en user_loader | OK |
+| Schema | migraciones `is_admin`, `mostrado_dashboard`, `digest_hora` | OK |
 
-## Corregido
+## Validado en Docker (2026-10-09)
 
-- C1: routes.py = origin/main + únicamente flash, `/reglas`, `/admin/users*`
-- C2: AlertaGenerada idéntico a main (mostrado_dashboard, sin tipo_entidad); scheduler sin tipo_entidad
-- C3: `validar_webhook_url` en auth_routes + revalidación en webhook_service (allow_redirects=False)
-- C4: `iniciar_worker_webhook` restaurado vía main.py de origin/main
-- C5: `check_insecure_defaults` en `create_app`; RuntimeError si production + defaults
-- A1: `scripts/restore_hotfix.py` eliminado
-- A2: `es_pro` sin get_db por acceso; timezone-aware; backref uselist=False
-- A4: tests importan función real con mock getaddrinfo
-- A5: `.github/workflows/ci.yml` (3.11/3.12, pytest, pyflakes)
-- Bid analyzer: null-org guard en `_buscar_por_organismo` (justificado: evita 500)
-- base.html: restaurado a origin/main
+- Migración `user_configs.digest_hora` aplicada al arrancar
+- GET `/dashboard`, `/reglas`, `/alertas`, `/licitaciones`, `/analytics`, `/upgrade`, `/licitaciones/<id>/analizar` → **200**
+- Bid Analyzer carga sin 500
 
-## No verificado en este entorno
+## Merge
 
-- Tests de integración Flask client end-to-end (landing/registro/dashboard/api)
-- Job CI real en GitHub Actions (workflow presente)
-- Renombre visible en UI de "probabilidad de ganar" → "Índice de oportunidad (heurístico, no calibrado)" (aplicado en template)
+```bash
+git checkout main && git pull
+git merge fase0/saneamiento-critico
+git push origin main
+```
 
-## Regla de cierre
-
-No se declara Fase 0 cerrada. El arquitecto revisa, aprueba y mergea a main.
+No se declara Fase 0 "cerrada por el agente"; el merge es decisión del mantenedor tras esta validación.
