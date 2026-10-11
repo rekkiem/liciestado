@@ -1,52 +1,49 @@
-"""Smoke tests Fase 0: rutas autenticadas, APIs, reglas, webhook anti-SSRF."""
-from __future__ import annotations
-
+"""Smoke routes + API existence + SSRF + alerta insert."""
+import os
 import pytest
-from datetime import datetime, timezone, timedelta
 
 
-@pytest.fixture
-def app(tmp_path, monkeypatch):
-    dbfile = tmp_path / "smoke.db"
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{dbfile}")
-    monkeypatch.delenv("FLASK_ENV", raising=False)
-    from config import settings
-    monkeypatch.setattr(settings, "SECRET_KEY", "test-secret-key-not-default")
-    monkeypatch.setattr(settings, "DASHBOARD_PASS", "test-pass-not-default")
-    monkeypatch.setattr(settings, "DATABASE_URL", f"sqlite:///{dbfile}")
-
-    from app.database import init_db, engine, Base
-    from app import models  # noqa
-    Base.metadata.drop_all(bind=engine)
-    init_db()
-
+@pytest.fixture()
+def app():
+    os.environ.setdefault("DATABASE_URL", "sqlite://")
+    os.environ.setdefault("SECRET_KEY", "test-secret-key-at-least-32-chars-long")
+    os.environ.setdefault("DASHBOARD_PASS", "testpass-not-default")
+    os.environ.setdefault("TICKET_MERCADO_PUBLICO", "TEST_TICKET_ONLY")
+    from app.database import init_db
     from app.dashboard import create_app
+    init_db()
     application = create_app()
     application.config["TESTING"] = True
     application.config["WTF_CSRF_ENABLED"] = False
     return application
 
 
-@pytest.fixture
+@pytest.fixture()
 def client(app):
     return app.test_client()
 
 
-@pytest.fixture
-def user_client(client, app):
-    from app.auth import registrar_usuario
-    from app.models import User
+@pytest.fixture()
+def user_client(app):
     from app.database import get_db
-    try:
-        registrar_usuario("smoke@test.com", "password123", "Smoke")
-    except Exception:
-        pass
+    from app.models import User
+    from werkzeug.security import generate_password_hash
     with get_db() as db:
         u = db.query(User).filter_by(email="smoke@test.com").first()
-        if u:
-            db.query(User).filter_by(id=u.id).update({"plan": "pro", "is_admin": True})
-    client.post("/login", data={"email": "smoke@test.com", "password": "password123"}, follow_redirects=False)
-    return client
+        if not u:
+            u = User(
+                email="smoke@test.com",
+                password_hash=generate_password_hash("pass12345"),
+                plan="pro",
+                activo=True,
+                is_admin=True,
+            )
+            db.add(u)
+            db.commit()
+    c = app.test_client()
+    # login
+    c.post("/login", data={"email": "smoke@test.com", "password": "pass12345"}, follow_redirects=True)
+    return c
 
 
 def test_authenticated_routes_no_500(user_client):
@@ -76,7 +73,8 @@ def test_webhook_rejects_ssrf():
         assert ok is False, f"should block {url}: {msg}"
 
 
-def test_alerta_insert_without_tipo_entidad():
+def test_alerta_insert_default_tipo_entidad():
+    """Inserta alerta; tipo_entidad usa default 'licitacion' si no se pasa."""
     from app.database import get_db
     from app.models import User, ReglaUsuario, AlertaGenerada
     with get_db() as db:
@@ -98,4 +96,5 @@ def test_alerta_insert_without_tipo_entidad():
         db.add(a)
         db.flush()
         assert a.id is not None
+        assert a.tipo_entidad == "licitacion"
         assert getattr(a, "mostrado_dashboard", True) is True
