@@ -172,7 +172,7 @@ def _migrate_user_config_schema():
 
 
 def _migrate_api_quota_schema():
-    """Alinea api_quota_logs con el ORM (creado_en y columnas base)."""
+    """Alinea api_quota_logs con el ORM (creado_en, limite)."""
     with engine.connect() as conn:
         try:
             result = conn.execute(
@@ -187,7 +187,6 @@ def _migrate_api_quota_schema():
                         "ALTER TABLE api_quota_logs ADD COLUMN creado_en DATETIME"
                     )
                 )
-                # Rellenar filas existentes
                 conn.execute(
                     __import__("sqlalchemy").text(
                         "UPDATE api_quota_logs SET creado_en = CURRENT_TIMESTAMP "
@@ -195,6 +194,13 @@ def _migrate_api_quota_schema():
                     )
                 )
                 logger.info("Migración: columna api_quota_logs.creado_en añadida")
+            if "limite" not in cols:
+                conn.execute(
+                    __import__("sqlalchemy").text(
+                        "ALTER TABLE api_quota_logs ADD COLUMN limite INTEGER NOT NULL DEFAULT 10000"
+                    )
+                )
+                logger.info("Migración: columna api_quota_logs.limite añadida")
             conn.commit()
         except Exception as e:
             logger.warning("Migración api_quota schema: %s", e)
