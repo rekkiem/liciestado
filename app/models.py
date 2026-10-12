@@ -219,7 +219,7 @@ class ApiQuotaLog(Base):
                                   nullable=False, index=True)
     fecha:      Mapped[str]  = mapped_column(String(10), nullable=False)
     requests:   Mapped[int]  = mapped_column(Integer, default=0, nullable=False)
-    creado_en:  Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    creado_en:  Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=True)
 
     __table_args__ = (UniqueConstraint("user_id", "fecha", name="uq_quota_user_fecha"),)
 
