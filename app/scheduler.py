@@ -40,7 +40,7 @@ def _quota_disponible(user_id: int) -> int:
 
 def _sincronizar_tipo(tipo: str, ticket: str, user_id: int, dias: int = 1) -> List[Dict]:
     from app.api_client import MercadoPublicoClient, QuotaExhaustedException
-    from app.normalizer import normalizar_licitacion, normalizar_oc
+    from app.normalizer import normalizar_licitacion, normalizar_orden_compra
 
     disponible = _quota_disponible(user_id)
     if disponible <= 0:
@@ -49,13 +49,18 @@ def _sincronizar_tipo(tipo: str, ticket: str, user_id: int, dias: int = 1) -> Li
 
     client = MercadoPublicoClient(ticket=ticket)
     entidades: List[Dict] = []
+    fecha_api = MercadoPublicoClient.to_api_date(datetime.utcnow() - timedelta(days=max(dias, 1)))
     try:
         if tipo == "licitacion":
-            raw = client.buscar_licitaciones(dias=dias)
-            entidades = [normalizar_licitacion(x) for x in raw]
-        elif tipo == "orden_compra":
-            raw = client.buscar_ordenes_compra(dias=dias)
-            entidades = [normalizar_oc(x) for x in raw]
+            for x in client.iter_licitaciones(fecha_desde=fecha_api):
+                n = normalizar_licitacion(x)
+                if n and n.get("codigo"):
+                    entidades.append(n)
+        elif tipo in ("orden_compra", "oc"):
+            for x in client.iter_ordenes_compra(fecha_desde=fecha_api):
+                n = normalizar_orden_compra(x)
+                if n and n.get("codigo"):
+                    entidades.append(n)
         else:
             logger.warning("tipo desconocido: %s", tipo)
     except QuotaExhaustedException as e:
@@ -99,7 +104,7 @@ def _sincronizar_tipo(tipo: str, ticket: str, user_id: int, dias: int = 1) -> Li
 
 
 def _evaluar_regla(regla: ReglaUsuario, entidades: List[Dict]) -> int:
-    from app.filter_engine import evaluar_filtros
+    from app.filter_engine import evaluar_regla
 
     nuevas = 0
     with get_db() as db:
@@ -107,7 +112,7 @@ def _evaluar_regla(regla: ReglaUsuario, entidades: List[Dict]) -> int:
         if not r:
             return 0
         for e in entidades:
-            if not evaluar_filtros(e, r.filtros or {}):
+            if not evaluar_regla(r, e):
                 continue
             entidad_id = e.get("codigo") or e.get("id") or ""
             if not entidad_id:
