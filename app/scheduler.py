@@ -258,3 +258,8 @@ def stop_scheduler():
     if _scheduler:
         _scheduler.shutdown(wait=False)
         _scheduler = None
+
+
+# Alias usado por main.py
+iniciar_scheduler = start_scheduler
+detener_scheduler = stop_scheduler
