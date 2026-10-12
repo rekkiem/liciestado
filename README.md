@@ -1,6 +1,8 @@
-# MP Alertas 🔔
+# LiciEstado 🔔
 
-**Monitor inteligente de Mercado Público** — Detecta licitaciones, órdenes de compra y compra ágil según tus reglas de filtrado y envía alertas por email.
+**Monitor multi-tenant de Mercado Público** — reglas de filtrado, alertas por email/webhook, analytics y Bid Analyzer.
+
+Proyecto orientado a verticales **TI** y **Obras Públicas** (Salud en roadmap). Demo objetivo: noviembre 2026.
 
 ---
 
@@ -8,12 +10,50 @@
 
 | Característica | Detalle |
 |---|---|
-| 🎯 Motor de filtros | Región, monto min/max, texto en título/descripción, códigos de producto, estado |
-| ⏰ Scheduler diario | Se ejecuta a las 06:00 AM (hora Chile) via APScheduler |
-| 📧 Alertas por email | HTML profesional con datos clave + link directo a Mercado Público |
-| 📊 Dashboard web | Gestión de reglas, historial de alertas, analytics con gráficos |
-| 🔄 Sincronización inteligente | Descarga una vez por tipo, evalúa todas las reglas en memoria |
-| 🐳 Dockerizado | `docker compose up -d` y listo |
+| 👥 Multi-tenant | Usuarios, planes free/pro, trial Pro, admin |
+| 🎯 Motor de filtros | Región, monto, título/descripción, códigos de producto, estado (27 operadores) |
+| ⏰ Scheduler diario | 06:00 America/Santiago (APScheduler) — sync API + eval reglas |
+| 📧 Notificaciones | Email realtime o digest, webhooks SSRF-safe (`net_safety`) |
+| 📊 Dashboard | Reglas, alertas, licitaciones, analytics, configuración de ticket |
+| 📈 Analytics API | resumen, categorías, organismos, regional, temporal, diario |
+| 🧮 Bid Analyzer | Análisis de precios (plan Pro / trial) |
+| 🔐 Seguridad | Flask-Login, CSRF, bcrypt, tickets cifrados (Fernet), headers CSP |
+| 🐳 Docker | `docker compose up --build -d` |
+
+---
+
+## Fase 0 — Saneamiento crítico ✅
+
+Mergeado a `main` (PR #1, 2026-10-12). Cambios principales:
+
+### Estabilidad y auth
+- **DetachedInstanceError** resuelto: `expire_on_commit=False` + `expunge` de `User`/`UserConfig` en `cargar_usuario`
+- Sesión Flask-Login usable fuera del `get_db()` (dashboard y `current_user.id`)
+
+### Schema SQLite (migraciones en `init_db`)
+- `alertas_generadas.tipo_entidad` (NOT NULL DEFAULT `'licitacion'`)
+- `alertas_generadas.mostrado_dashboard`
+- `api_quota_logs.creado_en` y `limite`
+- `users.is_admin`, `user_configs.*` (digest, webhook, trial, etc.)
+- Compatible con BDs creadas desde esquemas anteriores de `main`
+
+### Scheduler y notificaciones
+- Scheduler alineado con el diseño de producto: `encolar_alerta`, `encolar_digest`, `encolar_webhook`, resumen admin
+- Respeta `notif_mode` (realtime / digest) y `ALERT_DEDUP_DAYS`
+- `AlertaGenerada` inserta `tipo_entidad` desde la regla
+- `ApiQuotaLog` inserta `limite=settings.API_RATE_PER_DAY`
+- Entrypoints: `iniciar_scheduler` / `detener_scheduler`
+
+### Dashboard y API
+- Rutas restauradas: `/api/analytics/*`, `/api/status`, `/api/quota`, `/api/organismo/<nombre>`
+- `/licitaciones/export.csv`, `/licitaciones/<id>/analizar` (+ `/json`)
+- `/reglas`, `/admin/users*`
+- Aliases en `AnalyticsEngine`: `resumen`, `por_categoria`, `por_organismo`, `por_region`, `temporal`, `diario`, `perfil_organismo`
+
+### Tests y build
+- `pytest.ini` → solo carpeta `tests/` (no ejecuta el legacy `test_mvp.py`)
+- `.dockerignore` versionado (incluye `tests/` en la imagen)
+- CI: pyflakes + pytest en 3.11 / 3.12
 
 ---
 
@@ -23,247 +63,183 @@
 
 - Python 3.11+ **o** Docker + Docker Compose
 - Ticket de API de Mercado Público → [apis.mercadopublico.cl](https://apis.mercadopublico.cl/)
-- Cuenta SMTP (Gmail con App Password, SendGrid, etc.)
+- SMTP (Gmail App Password, SendGrid, etc.) para alertas por correo
 
 ### 2. Configuración
 
 ```bash
-# Clonar / descomprimir el proyecto
-cd mp_alertas
-
-# Copiar variables de entorno
+cd liciestado
 cp .env.example .env
-
-# Editar .env con tus valores reales
-nano .env   # o code .env
+# Editar .env
 ```
 
-Variables **mínimas** para funcionar:
+Mínimo recomendado:
 
 ```env
-TICKET_MERCADO_PUBLICO=TU_TICKET
+SECRET_KEY=cambia_esto
+DATABASE_URL=sqlite:////data/mercadopublico.db
+# Ticket: por usuario en Configuración del dashboard (cifrado)
 SMTP_HOST=smtp.gmail.com
 SMTP_USER=tu@gmail.com
 SMTP_PASSWORD=xxxx_xxxx_xxxx_xxxx
 SMTP_FROM=tu@gmail.com
-DASHBOARD_PASS=una_clave_segura
 ```
 
-### 3a. Ejecución con Python
+> El ticket de Mercado Público es **por usuario** (configuración en el dashboard). No hace falta ticket global salvo scripts legacy.
+
+### 3a. Docker (recomendado)
 
 ```bash
-# Crear entorno virtual
-python -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
-
-# Instalar dependencias
-pip install -r requirements.txt
-
-# Inicializar BD y datos de demo
-python main.py --demo
-
-# Arrancar servidor
-python main.py
-```
-
-Dashboard disponible en: **http://localhost:5000**
-Usuario: `admin` / Contraseña: (la de `DASHBOARD_PASS`)
-
-### 3b. Ejecución con Docker
-
-```bash
-# Construir imagen
-docker compose build
-
-# Arrancar (SQLite, recomendado para empezar)
-docker compose up -d
-
-# Ver logs
+docker compose up --build -d
 docker compose logs -f app
+```
 
-# Con PostgreSQL
+- Dashboard: http://localhost:5000
+- Landing: http://localhost:5000/landing
+
+Registro / login multi-tenant en la UI. Crea tu usuario y pega el ticket en **Configuración**.
+
+PostgreSQL opcional:
+
+```bash
 docker compose --profile postgres up -d
 ```
 
----
-
-## Comandos CLI
+### 3b. Python local
 
 ```bash
-python main.py                  # Servidor web + scheduler (modo normal)
-python main.py --once           # Una pasada inmediata de todas las reglas activas
-python main.py --init-db        # Solo crear tablas BD y salir
-python main.py --demo           # Insertar reglas de ejemplo + arrancar servidor
-```
-
----
-
-## Estructura del proyecto
-
-```
-mp_alertas/
-├── main.py                     # Punto de entrada único
-├── config.py                   # Settings (pydantic-settings + .env)
-├── requirements.txt
-├── Dockerfile
-├── docker-compose.yml
-├── .env.example
-│
-└── app/
-    ├── __init__.py
-    ├── database.py             # SQLAlchemy engine + session
-    ├── models.py               # ORM: ReglaUsuario, AlertaGenerada, LicitacionSnapshot
-    ├── api_client.py           # Cliente API Mercado Público (rate limit + retry + paginación)
-    ├── normalizer.py           # Transforma respuestas crudas a dict uniforme
-    ├── filter_engine.py        # evaluar_regla() — motor de filtros en memoria
-    ├── email_service.py        # Cola + worker SMTP
-    ├── scheduler.py            # APScheduler + ciclo diario
-    ├── analytics.py            # Insights y KPIs
-    │
-    └── dashboard/
-        ├── __init__.py         # Flask factory
-        ├── routes.py           # Todas las rutas (Basic Auth)
-        └── templates/
-            ├── base.html       # Layout + design system
-            ├── index.html      # Lista de reglas
-            ├── regla_form.html # Crear / editar regla
-            ├── alertas.html    # Historial de alertas
-            ├── alerta_detalle.html
-            └── analytics.html  # Dashboard de analytics
-```
-
----
-
-## Modelo de filtros
-
-El campo `filtros` de cada regla es un JSON con los siguientes operadores:
-
-| Operador | Tipo | Descripción | Ejemplo |
-|---|---|---|---|
-| `region` | int | Región exacta (código) | `13` → RM |
-| `region_in` | list[int] | Una de varias regiones | `[10, 14]` |
-| `monto_min` | int | Monto mínimo en CLP | `1000000` |
-| `monto_max` | int | Monto máximo en CLP | `50000000` |
-| `titulo_contains` | str | Palabra(s) en el título | `"software"` |
-| `descripcion_contains` | str | Palabra(s) en la descripción | `"consultoría"` |
-| `organismo_contains` | str | Nombre del organismo | `"municipalidad"` |
-| `codigo_producto` | str | Código de categoría exacto | `"30200000"` |
-| `codigo_producto_in` | list[str] | Uno de varios códigos | `["30200000","48100000"]` |
-| `estado` | str | Estado exacto | `"Publicada"` |
-| `estado_in` | list[str] | Uno de varios estados | `["Publicada","Adjudicada"]` |
-| `fecha_publicacion_desde` | str | Publicada desde (YYYY-MM-DD) | `"2024-01-01"` |
-| `fecha_publicacion_hasta` | str | Publicada hasta (YYYY-MM-DD) | `"2024-12-31"` |
-
-**Todos los criterios se combinan con AND lógico.**
-
-### Ejemplo completo de filtros JSON
-
-```json
-{
-  "region": 13,
-  "titulo_contains": "software",
-  "monto_min": 1000000,
-  "monto_max": 50000000,
-  "estado_in": ["Publicada", "Adjudicada"],
-  "codigo_producto_in": ["30200000", "43230000"]
-}
-```
-
----
-
-## Regiones de Chile
-
-| Código | Nombre |
-|---|---|
-| 1 | Tarapacá |
-| 2 | Antofagasta |
-| 3 | Atacama |
-| 4 | Coquimbo |
-| 5 | Valparaíso |
-| 6 | O'Higgins |
-| 7 | Maule |
-| 8 | Biobío |
-| 9 | Araucanía |
-| 10 | Los Lagos |
-| 11 | Aysén |
-| 12 | Magallanes |
-| 13 | Metropolitana |
-| 14 | Los Ríos |
-| 15 | Arica y Parinacota |
-| 16 | Ñuble |
-
----
-
-## Integración con la API de Mercado Público
-
-### Autenticación
-
-La API v1 requiere un `ticket` en el query string:
-```
-GET https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json?ticket=TU_TICKET
-```
-
-### Rate limiting
-
-El cliente respeta automáticamente:
-- **5 requests/segundo** (configurable con `API_RATE_PER_SECOND`)
-- **10,000 requests/día** (configurable con `API_RATE_PER_DAY`)
-- Retry con backoff exponencial ante 429/503
-- Detención automática al agotar la cuota diaria
-
-### Estrategia de sincronización
-
-Para minimizar el consumo de API cuando hay múltiples reglas:
-
-1. El scheduler agrupa las reglas por tipo de entidad
-2. Descarga **una sola vez** los datos del día para cada tipo
-3. Persiste en `licitaciones_snapshot`
-4. Evalúa **todas** las reglas sobre el conjunto en memoria
-
----
-
-## Variables de entorno completas
-
-Ver `.env.example` para la lista completa con descripciones.
-
----
-
-## Producción
-
-### Con Docker (recomendado)
-
-```bash
-# PostgreSQL + Nginx
-docker compose --profile postgres --profile nginx up -d
-```
-
-### Sin Docker
-
-```bash
-# Usar gunicorn para Flask, junto al scheduler en el mismo proceso
+python -m venv venv
+# Windows: venv\Scripts\activate
+source venv/bin/activate
+pip install -r requirements.txt
 python main.py
 ```
 
-> **Nota de seguridad:** En producción, cambia `DASHBOARD_PASS` y `SECRET_KEY`.
-> Usa HTTPS (nginx reverse proxy + Let's Encrypt).
+### Tests
+
+```bash
+# En el contenedor
+docker compose exec app pip install --user pytest
+docker compose exec app python -m pytest tests/ -q
+
+# En el host
+pip install -r requirements.txt pytest
+pytest tests/ -q
+```
+
+---
+
+## Comandos útiles
+
+```bash
+python main.py                  # Servidor + scheduler + workers
+python main.py --once           # Un ciclo de sync/eval y sale
+python main.py --init-db        # Solo migraciones / create_all
+
+# Enriquecimiento de snapshots (montos/región) — preferir horario valle
+docker compose exec app python scripts/enriquecer_bd.py --limite 30
+```
+
+---
+
+## Arquitectura (resumen)
+
+```
+main.py
+  ├─ init_db()              # create_all + migraciones SQLite
+  ├─ email worker           # cola de correos
+  ├─ webhook worker         # cola webhooks (net_safety)
+  ├─ APScheduler 06:00 CLT  # ciclo multi-tenant
+  └─ Flask dashboard        # rutas autenticadas
+
+app/
+  auth.py           # registro, login, ticket cifrado, user_loader
+  scheduler.py      # sync API → filtros → alertas → email/digest/webhook
+  api_client.py     # Mercado Público + rate limit / backoff 429
+  filter_engine.py  # operadores de reglas
+  analytics.py      # KPIs dashboard
+  bid_analyzer.py   # análisis de precios (Pro)
+  net_safety.py     # validación URL webhook (anti-SSRF)
+  database.py       # engine, get_db, migraciones
+  models.py         # User, Regla, Alerta, Snapshot, Quota, …
+```
+
+---
+
+## Modelo de planes
+
+| Plan | Reglas | Bid Analyzer | Analytics |
+|------|--------|--------------|-----------|
+| Free | 3 | No | Básico |
+| Pro / trial | Ilimitado* | Sí | Completo |
+| Enterprise | Ilimitado | Sí | Completo |
+
+\* `limite_reglas` vía `User.es_pro` (plan pro/enterprise o `trial_pro_hasta` activo).
+
+---
+
+## Seguridad
+
+- Passwords con **bcrypt**
+- Tickets API cifrados (Fernet / `app/crypto.py`)
+- CSRF (Flask-WTF) en formularios
+- Webhooks: bloqueo de IPs privadas / metadata cloud (`net_safety`)
+- `check_insecure_defaults` en arranque (falla en production si hay defaults inseguros)
+- Headers de seguridad en respuestas
+
+---
+
+## API interna (autenticada)
+
+| Ruta | Uso |
+|------|-----|
+| `GET /api/analytics/resumen` | KPIs |
+| `GET /api/analytics/categorias` | Top categorías |
+| `GET /api/analytics/organismos` | Top organismos |
+| `GET /api/analytics/regional` | Distribución regional |
+| `GET /api/analytics/temporal` | Tendencia |
+| `GET /api/analytics/diario` | Actividad diaria |
+| `GET /api/status` | Estado app |
+| `GET /api/quota` | Uso de cuota API del día |
+| `GET /api/organismo/<nombre>` | Perfil organismo |
+| `GET /licitaciones/export.csv` | Export CSV |
+| `GET /licitaciones/<id>/analizar/json` | Bid Analyzer JSON |
 
 ---
 
 ## Troubleshooting
 
-**No llegan emails:**
-1. Verificar `SMTP_*` en `.env`
-2. En Gmail: activar "Contraseñas de aplicación" en la cuenta Google
-3. Revisar logs: `docker compose logs -f app | grep email`
+**500 en `/dashboard` (DetachedInstanceError)**  
+Resuelto en Fase 0. Si reaparece: confirma `expire_on_commit=False` y `expunge` en `cargar_usuario`.
 
-**La API devuelve 401/403:**
-1. Verificar `TICKET_MERCADO_PUBLICO`
-2. El ticket puede expirar — solicitar uno nuevo en apis.mercadopublico.cl
+**`no such column: … tipo_entidad` / `creado_en` / `limite`**  
+Reinicia la app (`init_db` migra). O verifica:
 
-**No se generan alertas:**
-1. Ejecutar `python main.py --once` y revisar logs
-2. Verificar que las reglas estén **activas** en el dashboard
-3. Revisar que los filtros JSON sean válidos (el dashboard los valida)
+```bash
+docker compose exec app python -c "from app.database import engine; from sqlalchemy import text; c=engine.connect(); print([r[1] for r in c.execute(text('PRAGMA table_info(alertas_generadas)')).fetchall()])"
+```
+
+**No llegan emails**  
+1. `SMTP_*` en `.env`  
+2. Gmail: App Password  
+3. `docker compose logs -f app | grep -i email`  
+4. Modo `notif_mode=digest` vs `realtime` en configuración de usuario  
+
+**HTTP 429 de Mercado Público**  
+El cliente reintenta con espera. Evita enrich masivo en horario punta; usa `--limite` bajo y ventanas 22:00–07:00 CLT.
+
+**pytest: `tests/` not found en Docker**  
+Actualiza `.dockerignore` del repo (no debe excluir `tests/`) y rebuild.
+
+---
+
+## Roadmap breve
+
+- [x] Fase 0 — saneamiento crítico (merge PR #1)
+- [ ] Demo vertical TI (reglas Netxia / equipos / servicios)
+- [ ] Enrich controlado + menos 429 (backoff + ventanas)
+- [ ] Canales agente gratuitos (Telegram prioritario)
+- [ ] Vertical Salud
 
 ---
 

@@ -1,33 +1,29 @@
-# Auditoría LiciEstado — Fase 0 (lista para merge)
+# Auditoría LiciEstado — Fase 0
 
-Rama: `fase0/saneamiento-critico`  
-Estado: **lista para merge a main** tras validación local (dashboard / reglas / alertas / licitaciones / analizar → 200).
+Rama histórica: `fase0/saneamiento-critico`  
+Estado: **mergeado a `main`** (PR #1, 2026-10-12, commit merge `9be41ed`).
 
 ## Checklist Arquitecto
 
 | ID | Descripción | Estado |
 |----|-------------|--------|
-| C1 | routes + `/reglas` + `/admin/users` | OK (UI); APIs analytics en rama |
-| C2 | models/scheduler alineados; sin `tipo_entidad` en AlertaGenerada | OK |
-| C3 | `net_safety` en config webhook + revalidación al enviar | OK |
+| C1 | routes API + `/reglas` + `/admin/users` | OK |
+| C2 | models/scheduler; `tipo_entidad` en AlertaGenerada + migración | OK |
+| C3 | `net_safety` en webhook | OK |
 | C4 | worker webhook en `main.py` | OK |
-| C5 | `check_insecure_defaults` (RuntimeError en production) | OK |
-| A1 | `restore_hotfix.py` eliminado | OK |
-| A2 | `es_pro` sin get_db/lazy; `joinedload` en user_loader | OK |
-| Schema | migraciones `is_admin`, `mostrado_dashboard`, `digest_hora` | OK |
+| C5 | `check_insecure_defaults` | OK |
+| A1 | sin `restore_hotfix.py` | OK |
+| A2 | `es_pro` + `joinedload` / expunge en user_loader | OK |
+| Notif | `encolar_alerta` / digest / webhook restaurados | OK |
+| Session | `expire_on_commit=False` + DetachedInstance fix | OK |
+| Quota | `api_quota_logs.limite` + `creado_en` migrados | OK |
 
-## Validado en Docker (2026-10-09)
+## Validación post-merge
 
-- Migración `user_configs.digest_hora` aplicada al arrancar
-- GET `/dashboard`, `/reglas`, `/alertas`, `/licitaciones`, `/analytics`, `/upgrade`, `/licitaciones/<id>/analizar` → **200**
-- Bid Analyzer carga sin 500
+- Arranque Docker: scheduler 06:00, workers email/webhook, dashboard :5000
+- `pytest tests/ -q` → 34 passed (entorno Docker con pytest instalado)
+- GET dashboard / reglas / alertas / licitaciones / analytics → 200
 
-## Merge
+## Referencia
 
-```bash
-git checkout main && git pull
-git merge fase0/saneamiento-critico
-git push origin main
-```
-
-No se declara Fase 0 "cerrada por el agente"; el merge es decisión del mantenedor tras esta validación.
+Ver sección **Fase 0** en [README.md](README.md).
