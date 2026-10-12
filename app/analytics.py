@@ -101,3 +101,44 @@ class AnalyticsEngine:
             ).filter(LicitacionSnapshot.fecha_sincronizacion >= corte
             ).group_by("fecha").order_by("fecha").all()
         return [{"fecha": r[0] or "?", "cantidad": r[1] or 0} for r in rows]
+
+    # Aliases usados por app/dashboard/routes.py y templates/analytics.html
+    def resumen(self, dias: int = 30):
+        return self.resumen_ejecutivo(dias=dias)
+
+    def por_categoria(self, limit: int = 12, dias: int = 30):
+        return self.top_categorias(limit=limit, dias=dias)
+
+    def por_organismo(self, limit: int = 12, dias: int = 30):
+        return self.top_organismos(limit=limit, dias=dias)
+
+    def por_region(self, dias: int = 30):
+        return self.distribucion_regional(dias=dias)
+
+    def temporal(self, dias: int = 30):
+        return self.tendencia_temporal(dias=dias)
+
+    def diario(self, dias: int = 30):
+        return self.actividad_diaria(dias=dias)
+
+    def perfil_organismo(self, nombre: str, dias: int = 90) -> Dict:
+        """Perfil simple por nombre de organismo (substring)."""
+        corte = self._cutoff(dias)
+        with get_db() as db:
+            rows = (
+                db.query(LicitacionSnapshot)
+                .filter(
+                    LicitacionSnapshot.fecha_sincronizacion >= corte,
+                    cast(LicitacionSnapshot.datos["organismo"], String).ilike(f"%{nombre}%"),
+                )
+                .limit(200)
+                .all()
+            )
+            montos = [r.monto_clp for r in rows if r.monto_clp]
+            return {
+                "organismo": nombre,
+                "n_licitaciones": len(rows),
+                "monto_total_clp": int(sum(montos)) if montos else 0,
+                "monto_promedio_clp": int(sum(montos) / len(montos)) if montos else 0,
+                "monto_maximo_clp": int(max(montos)) if montos else 0,
+            }
