@@ -60,6 +60,7 @@ def init_db():
     _migrate_add_is_admin()
     _migrate_alerta_schema()
     _migrate_user_config_schema()
+    _migrate_api_quota_schema()
     logger.info("Base de datos inicializada correctamente.")
 
 
@@ -168,3 +169,32 @@ def _migrate_user_config_schema():
                 conn.commit()
         except Exception as e:
             logger.warning("Migración user_config schema: %s", e)
+
+
+def _migrate_api_quota_schema():
+    """Alinea api_quota_logs con el ORM (creado_en y columnas base)."""
+    with engine.connect() as conn:
+        try:
+            result = conn.execute(
+                __import__("sqlalchemy").text("PRAGMA table_info(api_quota_logs)")
+            )
+            cols = [row[1] for row in result.fetchall()]
+            if not cols:
+                return  # create_all la crea completa
+            if "creado_en" not in cols:
+                conn.execute(
+                    __import__("sqlalchemy").text(
+                        "ALTER TABLE api_quota_logs ADD COLUMN creado_en DATETIME"
+                    )
+                )
+                # Rellenar filas existentes
+                conn.execute(
+                    __import__("sqlalchemy").text(
+                        "UPDATE api_quota_logs SET creado_en = CURRENT_TIMESTAMP "
+                        "WHERE creado_en IS NULL"
+                    )
+                )
+                logger.info("Migración: columna api_quota_logs.creado_en añadida")
+            conn.commit()
+        except Exception as e:
+            logger.warning("Migración api_quota schema: %s", e)
