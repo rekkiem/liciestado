@@ -146,19 +146,31 @@ def validar_ticket_api(ticket: str) -> tuple[bool, str]:
 # ── Flask-Login loader ────────────────────────────────────────────────────────
 
 def cargar_usuario(user_id: str) -> Optional[User]:
-    """Cargador para Flask-Login. Carga UserConfig (joinedload) para evitar DetachedInstanceError en es_pro."""
+    """Cargador Flask-Login: User + config cargados y expungeados (seguros fuera de sesión)."""
     try:
         uid = int(user_id)
     except (ValueError, TypeError):
         return None
     from sqlalchemy.orm import joinedload
     with get_db() as db:
-        return (
+        user = (
             db.query(User)
             .options(joinedload(User.config))
             .filter_by(id=uid, activo=True)
             .first()
         )
+        if user is None:
+            return None
+        # Touch attrs while bound; then detach for Flask-Login request scope
+        _ = (user.id, user.email, user.plan, user.is_admin, user.password_hash,
+             user.activo, user.nombre)
+        cfg = user.config
+        if cfg is not None:
+            _ = (cfg.trial_pro_hasta, getattr(cfg, "digest_hora", None),
+                 getattr(cfg, "webhook_url", None))
+            db.expunge(cfg)
+        db.expunge(user)
+        return user
 
 
 # ── Cambio de contraseña ──────────────────────────────────────────────────────
