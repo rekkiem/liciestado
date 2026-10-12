@@ -146,8 +146,11 @@ def _evaluar_reglas_sobre_entidades(reglas, entidades, user_id, notif_mode="dige
                 if not eid or eid in ya_alertados:
                     continue
                 resumen = datos_resumen(entidad)
-                alerta = AlertaGenerada(user_id=user_id, regla_id=regla.id,
-                                        entidad_id=eid, datos_resumen=resumen, enviado_email=False)
+                alerta = AlertaGenerada(
+                    user_id=user_id, regla_id=regla.id, entidad_id=eid,
+                    tipo_entidad=getattr(regla, "tipo_entidad", None) or "licitacion",
+                    datos_resumen=resumen, enviado_email=False,
+                )
                 db.add(alerta)
                 ya_alertados.add(eid)
                 nuevas_alerta.append(resumen)

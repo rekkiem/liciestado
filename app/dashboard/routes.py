@@ -27,9 +27,12 @@ from app.scheduler import ejecutar_regla_manualmente
 logger = logging.getLogger(__name__)
 bp = Blueprint("dashboard", __name__)
 
+requires_auth = login_required
+analytics = AnalyticsEngine()
+
 
 def _u() -> int:
-    return int(current_user.id)
+    return current_user.id
 
 
 def _check_ticket():
@@ -45,49 +48,33 @@ def home():
         reglas_q = db.query(ReglaUsuario).filter_by(user_id=_u()).order_by(
             ReglaUsuario.fecha_creacion.desc()
         ).all()
-
         alertas_recientes = (
-            db.query(AlertaGenerada)
-            .filter_by(user_id=_u())
-            .order_by(AlertaGenerada.fecha_alerta.desc())
-            .limit(5)
-            .all()
+            db.query(AlertaGenerada).filter_by(user_id=_u())
+            .order_by(AlertaGenerada.fecha_alerta.desc()).limit(5).all()
         )
-
         reglas_data = []
         for r in reglas_q:
-            n_alertas = db.query(func.count(AlertaGenerada.id)).filter_by(
-                regla_id=r.id).scalar() or 0
+            n_alertas = db.query(func.count(AlertaGenerada.id)).filter_by(regla_id=r.id).scalar() or 0
             reglas_data.append({
                 "id": r.id, "nombre": r.nombre_regla, "activa": r.activa,
-                "tipo": r.tipo_entidad, "filtros": r.filtros,
-                "email": r.email_destino,
-                "fecha_creacion": r.fecha_creacion,
-                "fecha_ult_exec": r.fecha_ultima_ejecucion,
+                "tipo": r.tipo_entidad, "filtros": r.filtros, "email": r.email_destino,
+                "fecha_creacion": r.fecha_creacion, "fecha_ult_exec": r.fecha_ultima_ejecucion,
                 "n_alertas": n_alertas,
                 "filtros_desc": describe_filtros(r.filtros) if r.filtros else "Sin filtros",
             })
-
         alertas_data = []
         for a in alertas_recientes:
             d = a.datos_resumen or {}
             alertas_data.append({
                 "id": a.id, "regla_id": a.regla_id,
                 "regla_nombre": a.regla.nombre_regla if a.regla else "—",
-                "titulo": d.get("titulo", a.entidad_id),
-                "codigo": a.entidad_id,
-                "monto_clp": d.get("monto_clp"),
-                "fecha_alerta": a.fecha_alerta,
-                "enviado_email": a.enviado_email,
-                "tipo": d.get("tipo", "licitacion"),
+                "titulo": d.get("titulo", a.entidad_id), "codigo": a.entidad_id,
+                "monto_clp": d.get("monto_clp"), "fecha_alerta": a.fecha_alerta,
+                "enviado_email": a.enviado_email, "tipo": d.get("tipo", "licitacion"),
             })
-
     return render_template(
-        "index.html",
-        reglas=reglas_data,
-        alertas_recientes=alertas_data,
-        tiene_ticket=tiene_ticket,
-        limite_reglas=current_user.limite_reglas,
+        "index.html", reglas=reglas_data, alertas_recientes=alertas_data,
+        tiene_ticket=tiene_ticket, limite_reglas=current_user.limite_reglas,
         es_pro=current_user.es_pro,
     )
 
@@ -95,7 +82,6 @@ def home():
 @bp.route("/reglas")
 @login_required
 def reglas_lista():
-    """Alias del dashboard para el menú lateral."""
     return home()
 
 
@@ -125,10 +111,10 @@ def regla_editar(regla_id: int):
 
 
 def _guardar_regla(regla_id):
-    nombre   = request.form.get("nombre_regla", "").strip()
-    tipo     = request.form.get("tipo_entidad", "licitacion").strip()
-    email    = request.form.get("email_destino", current_user.email).strip()
-    activa   = request.form.get("activa") in ("on", "true", "1", True)
+    nombre = request.form.get("nombre_regla", "").strip()
+    tipo = request.form.get("tipo_entidad", "licitacion").strip()
+    email = request.form.get("email_destino", current_user.email).strip()
+    activa = request.form.get("activa") in ("on", "true", "1", True)
     filtros_raw = request.form.get("filtros", "{}").strip()
     try:
         filtros = _json.loads(filtros_raw) if filtros_raw else {}
@@ -143,11 +129,8 @@ def _guardar_regla(regla_id):
             r = db.query(ReglaUsuario).filter_by(id=regla_id, user_id=_u()).first()
             if not r:
                 abort(404)
-            r.nombre_regla = nombre
-            r.tipo_entidad = tipo
-            r.email_destino = email
-            r.filtros = filtros
-            r.activa = activa
+            r.nombre_regla = nombre; r.tipo_entidad = tipo
+            r.email_destino = email; r.filtros = filtros; r.activa = activa
             flash("Regla actualizada.", "success")
         else:
             n = db.query(ReglaUsuario).filter_by(user_id=_u()).count()
@@ -201,11 +184,7 @@ def regla_run(regla_id: int):
             flash(stats["error"], "error")
         else:
             n = stats.get("alertas_nuevas", 0)
-            flash(
-                f"Regla ejecutada: {n} alertas nuevas "
-                f"(evaluadas {stats.get('entidades_evaluadas', 0)}).",
-                "success",
-            )
+            flash(f"Regla ejecutada: {n} alertas nuevas (evaluadas {stats.get('entidades_evaluadas', 0)}).", "success")
     except Exception as e:
         logger.exception("Error ejecutando regla %s", regla_id)
         flash(f"Error al ejecutar: {e}", "error")
@@ -215,11 +194,10 @@ def regla_run(regla_id: int):
 @bp.route("/alertas")
 @login_required
 def alertas():
-    page         = request.args.get("page", 1, type=int)
-    per_page     = 30
-    tipo_filtro  = request.args.get("tipo", "").strip()
+    page = request.args.get("page", 1, type=int)
+    per_page = 30
+    tipo_filtro = request.args.get("tipo", "").strip()
     regla_filtro = request.args.get("regla", "").strip()
-
     with get_db() as db:
         q = db.query(AlertaGenerada).filter_by(user_id=_u())
         if tipo_filtro:
@@ -229,43 +207,27 @@ def alertas():
                 q = q.filter(AlertaGenerada.regla_id == int(regla_filtro))
             except ValueError:
                 pass
-
-        total    = q.count()
-        alertas_ = q.order_by(AlertaGenerada.fecha_alerta.desc()).offset(
-            (page - 1) * per_page).limit(per_page).all()
-
-        reglas_sel = db.query(ReglaUsuario.id, ReglaUsuario.nombre_regla).filter_by(
-            user_id=_u()).all()
-
+        total = q.count()
+        alertas_ = q.order_by(AlertaGenerada.fecha_alerta.desc()).offset((page - 1) * per_page).limit(per_page).all()
+        reglas_sel = db.query(ReglaUsuario.id, ReglaUsuario.nombre_regla).filter_by(user_id=_u()).all()
         alertas_data = []
         for a in alertas_:
             d = a.datos_resumen or {}
             alertas_data.append({
                 "id": a.id, "regla_id": a.regla_id,
                 "regla_nombre": a.regla.nombre_regla if a.regla else "—",
-                "entidad_id": a.entidad_id,
-                "codigo": a.entidad_id,
-                "titulo": d.get("titulo", a.entidad_id),
-                "organismo": d.get("organismo"),
-                "region": d.get("region"),
-                "monto_clp": d.get("monto_clp"),
-                "fecha_alerta": a.fecha_alerta,
-                "enviado_email": a.enviado_email,
+                "entidad_id": a.entidad_id, "codigo": a.entidad_id,
+                "titulo": d.get("titulo", a.entidad_id), "organismo": d.get("organismo"),
+                "region": d.get("region"), "monto_clp": d.get("monto_clp"),
+                "fecha_alerta": a.fecha_alerta, "enviado_email": a.enviado_email,
                 "tipo": d.get("tipo", "licitacion"),
             })
-
         reglas_select_data = [{"id": r[0], "nombre": r[1]} for r in reglas_sel]
-
     return render_template(
-        "alertas.html",
-        alertas=alertas_data,
-        total=total,
+        "alertas.html", alertas=alertas_data, total=total,
         total_paginas=max(1, (total + per_page - 1) // per_page),
-        page=page,
-        per_page=per_page,
-        tipo_filtro=tipo_filtro,
-        regla_filtro=regla_filtro,
-        reglas_select=reglas_select_data,
+        page=page, per_page=per_page, tipo_filtro=tipo_filtro,
+        regla_filtro=regla_filtro, reglas_select=reglas_select_data,
     )
 
 
@@ -278,14 +240,10 @@ def alerta_detalle(alerta_id: int):
             abort(404)
         d = a.datos_resumen or {}
         data = {
-            "id": a.id,
-            "entidad_id": a.entidad_id,
+            "id": a.id, "entidad_id": a.entidad_id,
             "regla_nombre": a.regla.nombre_regla if a.regla else "—",
-            "datos": d,
-            "fecha_alerta": a.fecha_alerta,
-            "enviado_email": a.enviado_email,
-            "titulo": d.get("titulo", a.entidad_id),
-            "tipo": d.get("tipo", "licitacion"),
+            "datos": d, "fecha_alerta": a.fecha_alerta, "enviado_email": a.enviado_email,
+            "titulo": d.get("titulo", a.entidad_id), "tipo": d.get("tipo", "licitacion"),
         }
     return render_template("alerta_detalle.html", alerta=data)
 
@@ -306,7 +264,6 @@ def licitaciones_browser():
     f_enr = request.args.get("enr", "").strip()
     f_org = request.args.get("org", "").strip()
     orden = request.args.get("orden", "sinc_desc")
-
     with get_db() as db:
         base_q = db.query(LicitacionSnapshot)
         if f_tipo:
@@ -335,55 +292,38 @@ def licitaciones_browser():
             except ValueError:
                 pass
         if f_org:
-            base_q = base_q.filter(
-                cast(LicitacionSnapshot.datos["organismo"], String).ilike(f"%{f_org}%")
-            )
-
+            base_q = base_q.filter(cast(LicitacionSnapshot.datos["organismo"], String).ilike(f"%{f_org}%"))
         orden_map = {
             "sinc_desc": LicitacionSnapshot.fecha_sincronizacion.desc(),
             "sinc_asc": LicitacionSnapshot.fecha_sincronizacion.asc(),
             "monto_desc": LicitacionSnapshot.monto_clp.desc().nulls_last(),
             "fecha_desc": LicitacionSnapshot.fecha_publicacion.desc().nulls_last(),
         }
-        base_q = base_q.order_by(
-            orden_map.get(orden, LicitacionSnapshot.fecha_sincronizacion.desc())
-        )
-
+        base_q = base_q.order_by(orden_map.get(orden, LicitacionSnapshot.fecha_sincronizacion.desc()))
         total = base_q.count()
         snaps = base_q.offset((page - 1) * per_page).limit(per_page).all()
-
         total_all = db.query(func.count(LicitacionSnapshot.id)).scalar() or 0
-        con_datos = db.query(func.count(LicitacionSnapshot.id)).filter(
-            LicitacionSnapshot.monto_clp.isnot(None)
-        ).scalar() or 0
+        con_datos = db.query(func.count(LicitacionSnapshot.id)).filter(LicitacionSnapshot.monto_clp.isnot(None)).scalar() or 0
         monto_total = db.query(func.sum(LicitacionSnapshot.monto_clp)).scalar() or 0
         monto_prom = (monto_total / con_datos) if con_datos else 0
-
         estados_q = (
             db.query(LicitacionSnapshot.estado, func.count(LicitacionSnapshot.id))
             .filter(LicitacionSnapshot.estado.isnot(None), LicitacionSnapshot.estado != "")
-            .group_by(LicitacionSnapshot.estado)
-            .order_by(func.count(LicitacionSnapshot.id).desc())
-            .all()
+            .group_by(LicitacionSnapshot.estado).order_by(func.count(LicitacionSnapshot.id).desc()).all()
         )
         estados_opts = [(e, n) for e, n in estados_q if e]
-
         regiones_q = (
             db.query(LicitacionSnapshot.region, func.count(LicitacionSnapshot.id))
-            .filter(LicitacionSnapshot.region.isnot(None))
-            .group_by(LicitacionSnapshot.region)
-            .order_by(func.count(LicitacionSnapshot.id).desc())
-            .all()
+            .filter(LicitacionSnapshot.region.isnot(None)).group_by(LicitacionSnapshot.region)
+            .order_by(func.count(LicitacionSnapshot.id).desc()).all()
         )
         regiones_opts = [(r, REGIONES_CHILE.get(r, f"R{r}"), n) for r, n in regiones_q]
-
         rows = []
         for s in snaps:
             d = s.datos or {}
             rows.append({
                 "id": s.id, "codigo": s.codigo, "tipo": s.tipo,
-                "titulo": d.get("titulo") or s.codigo,
-                "organismo": d.get("organismo") or "",
+                "titulo": d.get("titulo") or s.codigo, "organismo": d.get("organismo") or "",
                 "region": s.region,
                 "nombre_region": d.get("nombre_region") or REGIONES_CHILE.get(s.region, ""),
                 "monto_clp": s.monto_clp, "estado": s.estado or d.get("estado") or "",
@@ -393,7 +333,6 @@ def licitaciones_browser():
                 "link": d.get("link_detalle") or "",
                 "enriquecido": s.region is not None or s.monto_clp is not None,
             })
-
     qs_base = (
         f"q={q}&tipo={f_tipo}&estado={f_estado}&region={f_region}"
         f"&mmin={f_mmin}&mmax={f_mmax}&fd={f_fd}&fh={f_fh}&enr={f_enr}"
@@ -401,8 +340,7 @@ def licitaciones_browser():
     )
     n_filtros = sum(1 for v in [q, f_tipo, f_estado, f_region, f_mmin, f_mmax, f_fd, f_fh, f_enr, f_org] if v)
     return render_template(
-        "licitaciones.html",
-        rows=rows, page=page, per_page=per_page,
+        "licitaciones.html", rows=rows, page=page, per_page=per_page,
         total=total, total_paginas=max(1, (total + per_page - 1) // per_page),
         q=q, f_tipo=f_tipo, f_estado=f_estado, f_region=f_region,
         f_mmin=f_mmin, f_mmax=f_mmax, f_fd=f_fd, f_fh=f_fh, f_enr=f_enr,
@@ -411,6 +349,41 @@ def licitaciones_browser():
         total_all=total_all, con_datos=con_datos, sin_datos=total_all - con_datos,
         monto_total=monto_total, monto_prom=int(monto_prom), qs_base=qs_base,
         n_filtros=n_filtros, es_pro=current_user.es_pro,
+    )
+
+
+@bp.route("/licitaciones/export.csv")
+@login_required
+def licitaciones_export_csv():
+    q = request.args.get("q", "").strip()
+    f_tipo = request.args.get("tipo", "").strip()
+    f_estado = request.args.get("estado", "").strip()
+    with get_db() as db:
+        base_q = db.query(LicitacionSnapshot)
+        if f_tipo:
+            base_q = base_q.filter(LicitacionSnapshot.tipo == f_tipo)
+        if f_estado:
+            base_q = base_q.filter(LicitacionSnapshot.estado == f_estado)
+        if q:
+            like = f"%{q}%"
+            base_q = base_q.filter(
+                LicitacionSnapshot.codigo.ilike(like)
+                | cast(LicitacionSnapshot.datos["titulo"], String).ilike(like)
+            )
+        snaps = base_q.order_by(LicitacionSnapshot.fecha_sincronizacion.desc()).limit(5000).all()
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["codigo", "tipo", "titulo", "organismo", "estado", "region", "monto_clp", "fecha_publicacion"])
+    for s in snaps:
+        d = s.datos or {}
+        w.writerow([
+            s.codigo, s.tipo, d.get("titulo", ""), d.get("organismo", ""),
+            s.estado or "", s.region or "", s.monto_clp or "",
+            s.fecha_publicacion.isoformat() if s.fecha_publicacion else "",
+        ])
+    return Response(
+        buf.getvalue(), mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=licitaciones.csv"},
     )
 
 
@@ -428,8 +401,7 @@ def licitacion_detalle(snap_id: int):
             "monto": s.monto_clp, "estado": s.estado, "region": s.region,
             "nombre_region": d.get("nombre_region"),
             "fecha_pub": s.fecha_publicacion, "fecha_cierre": d.get("fecha_cierre"),
-            "datos": d, "tipo": s.tipo,
-            "link": d.get("link_detalle") or "",
+            "datos": d, "tipo": s.tipo, "link": d.get("link_detalle") or "",
         }
     return render_template("licitacion_detalle.html", item=item)
 
@@ -439,7 +411,6 @@ def licitacion_detalle(snap_id: int):
 def licitacion_analizar(snap_id: int):
     if not current_user.es_pro:
         return render_template("pro_required.html", feature="Bid Analyzer")
-
     from app.bid_analyzer import bid_analyzer
     costo_str = request.args.get("costo", "").strip()
     costo = int(costo_str) if costo_str.isdigit() else None
@@ -453,18 +424,109 @@ def licitacion_analizar(snap_id: int):
         abort(404)
     curva_json = _json.dumps(getattr(analisis.bid_optimo, "curva_precios", []) or [])
     return render_template(
-        "licitacion_analisis.html",
-        a=analisis,
-        curva_json=curva_json,
-        costo_input=costo or "",
-        snap_id=snap_id,
+        "licitacion_analisis.html", a=analisis, curva_json=curva_json,
+        costo_input=costo or "", snap_id=snap_id,
     )
+
+
+@bp.route("/licitaciones/<int:snap_id>/analizar/json")
+@login_required
+def licitacion_analizar_json(snap_id: int):
+    if not current_user.es_pro:
+        return jsonify({"error": "Plan Pro requerido"}), 403
+    from app.bid_analyzer import bid_analyzer
+    import dataclasses
+    costo_str = request.args.get("costo", "").strip()
+    costo = int(costo_str) if costo_str.isdigit() else None
+    try:
+        analisis = bid_analyzer.analizar(snap_id, costo_propio=costo)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    if not analisis:
+        return jsonify({"error": "No encontrado"}), 404
+    return jsonify(dataclasses.asdict(analisis))
 
 
 @bp.route("/analytics")
 @login_required
 def analytics_dashboard():
     return render_template("analytics.html")
+
+
+@bp.route("/api/analytics/resumen")
+@login_required
+def api_analytics_resumen():
+    return jsonify(analytics.resumen())
+
+
+@bp.route("/api/analytics/categorias")
+@login_required
+def api_analytics_categorias():
+    return jsonify(analytics.por_categoria())
+
+
+@bp.route("/api/analytics/organismos")
+@login_required
+def api_analytics_organismos():
+    return jsonify(analytics.por_organismo())
+
+
+@bp.route("/api/analytics/regional")
+@login_required
+def api_analytics_regional():
+    return jsonify(analytics.por_region())
+
+
+@bp.route("/api/analytics/temporal")
+@login_required
+def api_analytics_temporal():
+    return jsonify(analytics.temporal())
+
+
+@bp.route("/api/analytics/diario")
+@login_required
+def api_analytics_diario():
+    return jsonify(analytics.diario())
+
+
+@bp.route("/api/status")
+@login_required
+def api_status():
+    from app.scheduler import _scheduler
+    job = None
+    if _scheduler:
+        j = _scheduler.get_job("ciclo_diario")
+        job = str(j.next_run_time) if j and j.next_run_time else None
+    with get_db() as db:
+        n_lic = db.query(func.count(LicitacionSnapshot.id)).scalar() or 0
+        n_alertas = db.query(func.count(AlertaGenerada.id)).filter_by(user_id=_u()).scalar() or 0
+    return jsonify({
+        "ok": True, "licitaciones": n_lic, "alertas_usuario": n_alertas,
+        "proxima_ejecucion": job, "user_id": _u(),
+    })
+
+
+@bp.route("/api/quota")
+@login_required
+def api_quota():
+    from app.models import ApiQuotaLog
+    from datetime import datetime
+    fecha = datetime.utcnow().strftime("%Y-%m-%d")
+    with get_db() as db:
+        q = db.query(ApiQuotaLog).filter_by(user_id=_u(), fecha=fecha).first()
+        usados = q.requests if q else 0
+    from config import settings
+    return jsonify({
+        "fecha": fecha, "usados": usados,
+        "limite": settings.API_RATE_PER_DAY,
+        "restantes": max(0, settings.API_RATE_PER_DAY - usados),
+    })
+
+
+@bp.route("/api/organismo/<nombre>")
+@login_required
+def api_organismo_perfil(nombre: str):
+    return jsonify(analytics.perfil_organismo(nombre))
 
 
 def _require_admin():
@@ -499,12 +561,13 @@ def admin_user_toggle(user_id: int):
     if user_id == current_user.id:
         flash("No puedes desactivarte a ti mismo.", "error")
         return redirect(url_for("dashboard.admin_users"))
+    from app.models import User
     with get_db() as db:
-        from app.models import User
         u = db.query(User).filter_by(id=user_id).first()
         if not u:
-            abort(404)
+            flash("Usuario no encontrado.", "error")
+            return redirect(url_for("dashboard.admin_users"))
         u.activo = not u.activo
-        estado = "activado" if u.activo else "desactivado"
-    flash(f"Usuario {estado}.", "success")
+        db.commit()
+        flash(f"Usuario {u.email} {'activado' if u.activo else 'desactivado'}.", "success")
     return redirect(url_for("dashboard.admin_users"))

@@ -142,6 +142,8 @@ class AlertaGenerada(Base):
     regla_id:         Mapped[int]  = mapped_column(Integer,
                           ForeignKey("reglas_usuario.id", ondelete="CASCADE"), nullable=False)
     entidad_id:       Mapped[str]  = mapped_column(String(150), nullable=False, index=True)
+    # Compat BD antigua: columna NOT NULL residual; siempre rellenar desde la regla
+    tipo_entidad:     Mapped[str]  = mapped_column(String(50), nullable=False, default="licitacion")
     datos_resumen:    Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     fecha_alerta:     Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
     enviado_email:    Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -217,7 +219,8 @@ class ApiQuotaLog(Base):
                                   nullable=False, index=True)
     fecha:      Mapped[str]  = mapped_column(String(10), nullable=False)
     requests:   Mapped[int]  = mapped_column(Integer, default=0, nullable=False)
-    creado_en:  Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    limite:     Mapped[int]  = mapped_column(Integer, default=10000, nullable=False)
+    creado_en:  Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=True)
 
     __table_args__ = (UniqueConstraint("user_id", "fecha", name="uq_quota_user_fecha"),)
 

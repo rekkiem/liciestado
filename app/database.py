@@ -1,42 +1,47 @@
-"""
-app/database.py — Motor SQLAlchemy + Flask-Login init.
-"""
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
-from contextlib import contextmanager
+"""app/database.py — SQLAlchemy engine, session y migraciones SQLite-safe."""
+from __future__ import annotations
+
 import logging
+from contextlib import contextmanager
+from typing import Generator
+
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+# SQLite necesita check_same_thread=False para multi-thread (scheduler + Flask)
+_connect_args = {}
+if settings.DATABASE_URL.startswith("sqlite"):
+    _connect_args = {"check_same_thread": False}
+
+engine = create_engine(
+    settings.DATABASE_URL,
+    connect_args=_connect_args,
+    pool_pre_ping=True,
+)
+
+# expire_on_commit=False: objetos User siguen usables tras cerrar get_db()
+# (crítico para Flask-Login current_user fuera de la sesión)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
 class Base(DeclarativeBase):
     pass
 
 
-engine = create_engine(
-    settings.DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {},
-    pool_pre_ping=True,
-    echo=False,
-)
-
-
 @event.listens_for(engine, "connect")
-def _sqlite_pragmas(dbapi_conn, _):
-    if "sqlite" in settings.DATABASE_URL:
-        cur = dbapi_conn.cursor()
-        cur.execute("PRAGMA journal_mode=WAL")
-        cur.execute("PRAGMA foreign_keys=ON")
-        cur.close()
-
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
+def _set_sqlite_pragma(dbapi_conn, connection_record):
+    if settings.DATABASE_URL.startswith("sqlite"):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 
 @contextmanager
-def get_db() -> Session:
+def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()
     try:
         yield db
@@ -55,50 +60,39 @@ def init_db():
     _migrate_add_is_admin()
     _migrate_alerta_schema()
     _migrate_user_config_schema()
+    _migrate_api_quota_schema()
     logger.info("Base de datos inicializada correctamente.")
 
 
 def _migrate_add_user_id():
+    """Añade user_id a tablas legacy si no existe.
+    Compatible con SQLite (no soporta ALTER TABLE ADD COLUMN IF NOT EXISTS en versiones viejas).
     """
-    Migración no destructiva: añade columna user_id a tablas existentes
-    si no existe. Compatible con SQLite (no soporta ALTER TABLE ADD COLUMN
-    con FK, pero sí con NULL).
-    """
+    from sqlalchemy import text
+    tablas = ("reglas_usuario", "alertas_generadas")
     with engine.connect() as conn:
-        for tabla, col in [
-            ("reglas_usuario",   "user_id INTEGER REFERENCES users(id) ON DELETE CASCADE"),
-            ("alertas_generadas","user_id INTEGER REFERENCES users(id) ON DELETE CASCADE"),
-        ]:
+        for tabla in tablas:
             try:
-                result = conn.execute(
-                    __import__("sqlalchemy").text(f"PRAGMA table_info({tabla})")
-                )
+                result = conn.execute(text(f"PRAGMA table_info({tabla})"))
                 cols = [row[1] for row in result.fetchall()]
-                if "user_id" not in cols:
-                    conn.execute(
-                        __import__("sqlalchemy").text(
-                            f"ALTER TABLE {tabla} ADD COLUMN user_id INTEGER"
-                        )
-                    )
+                if cols and "user_id" not in cols:
+                    conn.execute(text(f"ALTER TABLE {tabla} ADD COLUMN user_id INTEGER"))
                     conn.commit()
-                    logger.info("Migración: columna user_id añadida a %s", tabla)
+                    logger.info("Migración: columna %s.user_id añadida", tabla)
             except Exception as e:
-                logger.debug("Migración %s: %s", tabla, e)
+                logger.warning("Migración user_id %s: %s", tabla, e)
 
 
 def _migrate_add_is_admin():
     """Añade columna is_admin a users si no existe (SQLite-safe)."""
+    from sqlalchemy import text
     with engine.connect() as conn:
         try:
-            result = conn.execute(
-                __import__("sqlalchemy").text("PRAGMA table_info(users)")
-            )
+            result = conn.execute(text("PRAGMA table_info(users)"))
             cols = [row[1] for row in result.fetchall()]
-            if "is_admin" not in cols:
+            if cols and "is_admin" not in cols:
                 conn.execute(
-                    __import__("sqlalchemy").text(
-                        "ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0"
-                    )
+                    text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT 0")
                 )
                 conn.commit()
                 logger.info("Migración: columna users.is_admin añadida")
@@ -107,8 +101,11 @@ def _migrate_add_is_admin():
 
 
 def _migrate_alerta_schema():
-    """Alinea alertas_generadas al schema de main: añade mostrado_dashboard si falta.
-    SQLite no puede DROP COLUMN fácilmente; tipo_entidad residual se ignora en el ORM.
+    """Alinea alertas_generadas: añade columnas faltantes para BDs antiguas y de main.
+
+    - mostrado_dashboard (default 1)
+    - tipo_entidad (NOT NULL DEFAULT 'licitacion') — requerido por el ORM actual;
+      BDs creadas con esquema main sin esta columna fallan al consultar sin el ALTER.
     """
     with engine.connect() as conn:
         try:
@@ -116,14 +113,24 @@ def _migrate_alerta_schema():
                 __import__("sqlalchemy").text("PRAGMA table_info(alertas_generadas)")
             )
             cols = [row[1] for row in result.fetchall()]
+            if not cols:
+                return  # tabla aún no existe; create_all la crea completa
             if "mostrado_dashboard" not in cols:
                 conn.execute(
                     __import__("sqlalchemy").text(
                         "ALTER TABLE alertas_generadas ADD COLUMN mostrado_dashboard BOOLEAN DEFAULT 1"
                     )
                 )
-                conn.commit()
                 logger.info("Migración: columna alertas_generadas.mostrado_dashboard añadida")
+            if "tipo_entidad" not in cols:
+                # SQLite permite ADD COLUMN NOT NULL solo con DEFAULT
+                conn.execute(
+                    __import__("sqlalchemy").text(
+                        "ALTER TABLE alertas_generadas ADD COLUMN tipo_entidad VARCHAR(50) NOT NULL DEFAULT 'licitacion'"
+                    )
+                )
+                logger.info("Migración: columna alertas_generadas.tipo_entidad añadida")
+            conn.commit()
         except Exception as e:
             logger.warning("Migración alerta schema: %s", e)
 
@@ -162,3 +169,38 @@ def _migrate_user_config_schema():
                 conn.commit()
         except Exception as e:
             logger.warning("Migración user_config schema: %s", e)
+
+
+def _migrate_api_quota_schema():
+    """Alinea api_quota_logs con el ORM (creado_en, limite)."""
+    with engine.connect() as conn:
+        try:
+            result = conn.execute(
+                __import__("sqlalchemy").text("PRAGMA table_info(api_quota_logs)")
+            )
+            cols = [row[1] for row in result.fetchall()]
+            if not cols:
+                return  # create_all la crea completa
+            if "creado_en" not in cols:
+                conn.execute(
+                    __import__("sqlalchemy").text(
+                        "ALTER TABLE api_quota_logs ADD COLUMN creado_en DATETIME"
+                    )
+                )
+                conn.execute(
+                    __import__("sqlalchemy").text(
+                        "UPDATE api_quota_logs SET creado_en = CURRENT_TIMESTAMP "
+                        "WHERE creado_en IS NULL"
+                    )
+                )
+                logger.info("Migración: columna api_quota_logs.creado_en añadida")
+            if "limite" not in cols:
+                conn.execute(
+                    __import__("sqlalchemy").text(
+                        "ALTER TABLE api_quota_logs ADD COLUMN limite INTEGER NOT NULL DEFAULT 10000"
+                    )
+                )
+                logger.info("Migración: columna api_quota_logs.limite añadida")
+            conn.commit()
+        except Exception as e:
+            logger.warning("Migración api_quota schema: %s", e)

@@ -44,7 +44,7 @@ certs/
 .DS_Store
 
 # Docker
-.dockerignore
+# .dockerignore se versiona (no excluir tests del build)
 
 # Test output
 test_output.txt
