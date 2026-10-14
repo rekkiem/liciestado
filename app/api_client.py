@@ -82,10 +82,20 @@ def _parse_retry_after(header_value: Optional[str]) -> Optional[float]:
     return None
 
 
-def _backoff_with_jitter(attempt: int, base: float = 2.0, cap: float = 120.0) -> float:
-    """Backoff exponencial con jitter full (0 .. min(cap, base*2^attempt))."""
+def _backoff_with_jitter(
+    attempt: int,
+    base: float = 2.0,
+    cap: float = 120.0,
+    *,
+    floor: float = 0.0,
+) -> float:
+    """Backoff exponencial con equal jitter: exp/2 + U(0, exp/2).
+
+    floor: espera mínima (p.ej. 2s en 429 para no reintentar casi al instante).
+    """
     exp = min(cap, base * (2 ** attempt))
-    return random.uniform(0, exp)
+    wait = (exp / 2.0) + random.uniform(0, exp / 2.0)
+    return max(floor, wait)
 
 
 # ---------------------------------------------------------------------------
@@ -247,9 +257,10 @@ class MercadoPublicoClient:
                     consecutive_429_in_cycle += 1
                     ra = _parse_retry_after(resp.headers.get("Retry-After"))
                     if ra is not None:
-                        wait = ra + random.uniform(0, 1.5)
+                        # Jitter pequeño sobre Retry-After, con piso 2s
+                        wait = max(2.0, ra + random.uniform(0, 1.5))
                     else:
-                        wait = _backoff_with_jitter(attempt, base=5.0, cap=90.0)
+                        wait = _backoff_with_jitter(attempt, base=5.0, cap=90.0, floor=2.0)
                     logger.warning(
                         "HTTP 429 (intento %d/%d). Esperando %.1fs…",
                         attempt + 1,
