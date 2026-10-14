@@ -182,13 +182,13 @@ class BidAnalyzer:
         return [{"codigo":s.codigo,"titulo":(s.datos or {}).get("titulo",""),"monto":s.monto_clp,"estado":s.estado or "","ratio":None} for s in q.limit(limit).all()]
 
     def _buscar_por_organismo(self, db, org, limit):
-        from sqlalchemy import cast, String
+        from app.db_dialect import json_as_text
         if not org:
             return []
         org_str = str(org)[:20]
         q = db.query(LicitacionSnapshot).filter(
             LicitacionSnapshot.monto_clp.isnot(None),
-            cast(LicitacionSnapshot.datos["organismo"], String).ilike(f"%{org_str}%"),
+            json_as_text(LicitacionSnapshot.datos, "organismo").ilike(f"%{org_str}%"),
         ).limit(limit)
         return [{"monto": s.monto_clp, "estado": s.estado or "", "ratio": None} for s in q.all()]
 
