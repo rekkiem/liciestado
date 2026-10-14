@@ -1,26 +1,84 @@
 name: CI
+
 on:
   push:
-    branches: [main, "fase0/**"]
+    branches: [main, "fase0/**", "fase1/**"]
   pull_request:
     branches: [main]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyflakes
+      - name: Pyflakes
+        run: pyflakes app main.py config.py tests
+
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
+        database: [sqlite, postgres]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: mp_user
+          POSTGRES_PASSWORD: mp_pass
+          POSTGRES_DB: mp_alertas_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mp_user -d mp_alertas_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SECRET_KEY: test-secret-key-at-least-32-chars-long
+      DASHBOARD_PASS: testpass-not-default
+      TICKET_MERCADO_PUBLICO: TEST_TICKET_ONLY
+      SMTP_HOST: localhost
+      SMTP_PORT: "1025"
+      SMTP_USER: test@test.cl
+      SMTP_PASSWORD: pass
+      SMTP_FROM: test@test.cl
+      SMTP_USE_TLS: "false"
+      API_RATE_PER_DAY: "10000"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest pyflakes
-      - name: Pyflakes
-        run: pyflakes app main.py config.py tests
+          pip install -r requirements.txt pytest
+
+      - name: Configure DATABASE_URL (sqlite)
+        if: matrix.database == 'sqlite'
+        run: echo "DATABASE_URL=sqlite:///:memory:" >> $GITHUB_ENV
+
+      - name: Configure DATABASE_URL (postgres)
+        if: matrix.database == 'postgres'
+        run: |
+          echo "DATABASE_URL=postgresql+psycopg://mp_user:mp_pass@localhost:5432/mp_alertas_test" >> $GITHUB_ENV
+
+      - name: Alembic upgrade head (postgres)
+        if: matrix.database == 'postgres'
+        run: |
+          python -m alembic upgrade head
+          python -m alembic current
+          python -m alembic check || true
+
       - name: Pytest
-        run: pytest -q
+        run: pytest -q --tb=short
