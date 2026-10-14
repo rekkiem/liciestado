@@ -12,8 +12,10 @@ Diseño Fase 1 / Objetivo 1:
   - Preferir ventana valle 22:00–07:00 America/Santiago
 
 Uso:
+  python scripts/enriquecer_bd.py                  # lote de 50 (default)
   python scripts/enriquecer_bd.py --limite 30
-  python scripts/enriquecer_bd.py --limite 500 --lote 50
+  python scripts/enriquecer_bd.py --todos          # todos los pendientes (explícito)
+  python scripts/enriquecer_bd.py --force          # permite >50 fuera de ventana valle
   python scripts/enriquecer_bd.py --dry-run
 """
 from __future__ import annotations
@@ -67,12 +69,19 @@ def _en_ventana_valle(now: datetime | None = None) -> bool:
     return h >= VALLE_INICIO or h < VALLE_FIN
 
 
-def run(limite: int | None, dry_run: bool, solo_sin_region: bool, lote: int) -> int:
+def run(
+    limite: int | None,
+    dry_run: bool,
+    solo_sin_region: bool,
+    lote: int,
+    *,
+    force: bool = False,
+) -> int:
     """
     Returns exit code:
       0 = completado (o dry-run)
       2 = incompleto (cortado por cuota / rate limit)
-      1 = error inesperado
+      1 = error inesperado / rechazado por política de ventana
     """
     init_db()
     client = make_enrich_client()
@@ -83,7 +92,7 @@ def run(limite: int | None, dry_run: bool, solo_sin_region: bool, lote: int) -> 
         if solo_sin_region:
             q = q.filter(LicitacionSnapshot.region.is_(None))
         total_pendiente = q.count()
-        pendientes = q.limit(limite).all() if limite else q.all()
+        pendientes = q.limit(limite).all() if limite is not None else q.all()
         codigos = [(s.id, s.codigo, s.tipo) for s in pendientes]
 
     print(f"\n{B}Enriquecer BD — fetch detalle por código{NC}")
@@ -94,13 +103,22 @@ def run(limite: int | None, dry_run: bool, solo_sin_region: bool, lote: int) -> 
     print(f"  Modo       : {'DRY RUN' if dry_run else 'ESCRITURA'}")
 
     now_cl = datetime.now(TZ_CL)
-    if not _en_ventana_valle(now_cl):
+    en_valle = _en_ventana_valle(now_cl)
+    if en_valle:
+        print(f"  {G}Ventana valle OK ({now_cl.strftime('%H:%M %Z')}){NC}")
+    else:
         print(
             f"  {Y}Aviso: fuera de ventana valle (22:00–07:00 CL). "
-            f"Ahora {now_cl.strftime('%H:%M %Z')}. Preferir horario bajo para no competir con sync.{NC}"
+            f"Ahora {now_cl.strftime('%H:%M %Z')}.{NC}"
         )
-    else:
-        print(f"  {G}Ventana valle OK ({now_cl.strftime('%H:%M %Z')}){NC}")
+        if len(codigos) > 50 and not force:
+            print(
+                f"  {R}Rechazado: >50 ítems fuera de valle. "
+                f"Usa --limite 50 (o menos) o --force.{NC}\n"
+            )
+            return 1
+        if force:
+            print(f"  {Y}--force activo: se continúa fuera de valle.{NC}")
     print()
 
     if dry_run:
@@ -211,8 +229,18 @@ if __name__ == "__main__":
     p.add_argument(
         "--limite",
         type=int,
-        default=0,
-        help="Máx a procesar (0=todos)",
+        default=50,
+        help="Máx a procesar (default 50). Usar --todos para sin tope.",
+    )
+    p.add_argument(
+        "--todos",
+        action="store_true",
+        help="Procesar todos los pendientes (equivalente a --limite omitido)",
+    )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Permitir >50 ítems fuera de ventana valle 22:00–07:00 CL",
     )
     p.add_argument("--dry-run", action="store_true")
     p.add_argument(
@@ -234,5 +262,6 @@ if __name__ == "__main__":
     )
     args = p.parse_args()
     solo = not args.incluir_con_region
-    code = run(args.limite or None, args.dry_run, solo, max(1, args.lote))
+    limite = None if args.todos else args.limite
+    code = run(limite, args.dry_run, solo, max(1, args.lote), force=args.force)
     sys.exit(code)
