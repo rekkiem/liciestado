@@ -1,8 +1,5 @@
-try:
-    from pydantic_settings import BaseSettings
-except ImportError:  # pragma: no cover
-    from pydantic import BaseModel as BaseSettings  # type: ignore
-
+from pydantic import field_validator
+from pydantic_settings import BaseSettings
 from typing import Optional
 
 
@@ -46,34 +43,16 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
-
-def _load_settings() -> Settings:
-    try:
-        return Settings()
-    except Exception:
-        # Fallback si pydantic-settings no lee env (BaseModel puro)
-        import os
-        kwargs = {}
-        mapping = {
-            "TICKET_MERCADO_PUBLICO": str,
-            "API_BASE_URL": str,
-            "API_RATE_PER_SECOND": float,
-            "API_RATE_PER_DAY": int,
-            "API_ENRICH_RATE_PER_SECOND": float,
-            "API_MAX_RETRIES": int,
-            "API_CIRCUIT_BREAKER_THRESHOLD": int,
-            "API_CIRCUIT_BREAKER_PAUSE_SEC": float,
-            "DATABASE_URL": str,
-            "SECRET_KEY": str,
-            "DASHBOARD_PASS": str,
-        }
-        for key, caster in mapping.items():
-            if key in os.environ:
-                try:
-                    kwargs[key] = caster(os.environ[key])
-                except Exception:
-                    pass
-        return Settings(**kwargs)
+    @field_validator("API_RATE_PER_DAY")
+    @classmethod
+    def _cap_daily_quota(cls, v: int) -> int:
+        if v > 10_000:
+            raise ValueError(
+                "API_RATE_PER_DAY no puede superar 10000 (techo duro Mercado Público / producto)."
+            )
+        if v < 1:
+            raise ValueError("API_RATE_PER_DAY debe ser >= 1")
+        return v
 
 
-settings = _load_settings()
+settings = Settings()
