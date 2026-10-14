@@ -27,3 +27,11 @@ Estado: **mergeado a `main`** (PR #1, 2026-10-12, commit merge `9be41ed`).
 ## Referencia
 
 Ver sección **Fase 0** en [README.md](README.md).
+
+## Fase 1 / Objetivo 1 — notas post-verificación (2026-10-13)
+
+Pendiente **Objetivo 4** (no bloquea merge Obj1):
+
+- `iter_licitaciones` / `iter_ordenes_compra` devuelven lista vacía sin excepción tras un 429 agotado: una sync cortada aún puede parecer vacía. Marcar `sync_state=incompleto` en Obj4.
+- Ítems que fallan o no traen región siguen "pendientes" indefinidamente → contadores de reintento en Obj4.
+- Cuota diaria del rate limiter vive en memoria → persistir en BD en Obj4.
