@@ -53,14 +53,83 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-def init_db():
-    from app import models  # noqa
-    Base.metadata.create_all(bind=engine)
+def _alembic_cfg():
+    """Config Alembic apuntando a DATABASE_URL actual."""
+    from pathlib import Path
+    from alembic.config import Config
+    root = Path(__file__).resolve().parents[1]
+    cfg = Config(str(root / "alembic.ini"))
+    cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+    cfg.set_main_option("script_location", str(root / "alembic"))
+    return cfg
+
+
+def _alembic_current_rev() -> str | None:
+    try:
+        from alembic.runtime.migration import MigrationContext
+        with engine.connect() as conn:
+            ctx = MigrationContext.configure(conn)
+            return ctx.get_current_revision()
+    except Exception as e:
+        logger.debug("No se pudo leer revision Alembic: %s", e)
+        return None
+
+
+def _run_sqlite_legacy_migrations() -> None:
+    """Solo SQLite: lleva variantes antiguas al estado post–Fase 0."""
+    if not settings.DATABASE_URL.startswith("sqlite"):
+        return
     _migrate_add_user_id()
     _migrate_add_is_admin()
     _migrate_alerta_schema()
     _migrate_user_config_schema()
     _migrate_api_quota_schema()
+
+
+def init_db():
+    """Inicializa el esquema.
+
+    - PostgreSQL: solo `alembic upgrade head` (sin create_all / PRAGMA).
+    - SQLite vacío: create_all + stamp baseline (o upgrade si no hay tablas).
+    - SQLite legacy: migraciones _migrate_* → stamp baseline si no hay alembic_version.
+    """
+    from app import models  # noqa: F401
+    from sqlalchemy import inspect, text
+
+    is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    has_alembic = "alembic_version" in tables
+    rev = _alembic_current_rev() if has_alembic else None
+
+    if is_sqlite:
+        # Asegura tablas base + columnas legacy
+        Base.metadata.create_all(bind=engine)
+        _run_sqlite_legacy_migrations()
+        if not has_alembic or rev is None:
+            try:
+                from alembic import command
+                command.stamp(_alembic_cfg(), "001_baseline")
+                logger.info("init_db: SQLite → alembic stamp 001_baseline")
+            except Exception as e:
+                logger.warning("init_db: stamp Alembic falló (%s); schema listo vía create_all", e)
+        else:
+            try:
+                from alembic import command
+                command.upgrade(_alembic_cfg(), "head")
+                logger.info("init_db: SQLite alembic upgrade head (rev previa=%s)", rev)
+            except Exception as e:
+                logger.warning("init_db: upgrade Alembic: %s", e)
+    else:
+        # PostgreSQL: solo Alembic
+        try:
+            from alembic import command
+            command.upgrade(_alembic_cfg(), "head")
+            logger.info("init_db: PostgreSQL alembic upgrade head")
+        except Exception as e:
+            logger.error("init_db: fallo alembic en PostgreSQL: %s", e)
+            raise
+
     logger.info("Base de datos inicializada correctamente.")
 
 
