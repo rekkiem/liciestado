@@ -2,8 +2,9 @@
 from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
-from sqlalchemy import cast, String, func
+from sqlalchemy import func
 from app.database import get_db
+from app.db_dialect import date_trunc_expr, json_as_text
 from app.models import LicitacionSnapshot, AlertaGenerada, ReglaUsuario
 
 REGIONES_CHILE: Dict[int, str] = {
@@ -30,7 +31,7 @@ class AnalyticsEngine:
                 LicitacionSnapshot.fecha_sincronizacion >= corte
             ).scalar() or 0
             organismos = db.query(func.count(func.distinct(
-                cast(LicitacionSnapshot.datos["organismo"], String)
+                json_as_text(LicitacionSnapshot.datos, "organismo")
             ))).filter(LicitacionSnapshot.fecha_sincronizacion >= corte).scalar() or 0
             regiones = db.query(func.count(func.distinct(LicitacionSnapshot.region))).filter(
                 LicitacionSnapshot.region.isnot(None),
@@ -48,11 +49,11 @@ class AnalyticsEngine:
         corte = self._cutoff(dias)
         with get_db() as db:
             rows = db.query(
-                cast(LicitacionSnapshot.datos["codigo_producto"], String),
+                json_as_text(LicitacionSnapshot.datos, "codigo_producto"),
                 func.count(LicitacionSnapshot.id),
                 func.sum(LicitacionSnapshot.monto_clp),
             ).filter(LicitacionSnapshot.fecha_sincronizacion >= corte).group_by(
-                cast(LicitacionSnapshot.datos["codigo_producto"], String)
+                json_as_text(LicitacionSnapshot.datos, "codigo_producto")
             ).order_by(func.count(LicitacionSnapshot.id).desc()).limit(limit).all()
         return [{"codigo": r[0], "nombre": r[0] or "Sin categoría", "cantidad": r[1] or 0, "monto_total": r[2] or 0} for r in rows]
 
@@ -60,12 +61,12 @@ class AnalyticsEngine:
         corte = self._cutoff(dias)
         with get_db() as db:
             rows = db.query(
-                cast(LicitacionSnapshot.datos["organismo"], String),
+                json_as_text(LicitacionSnapshot.datos, "organismo"),
                 func.count(LicitacionSnapshot.id),
                 func.sum(LicitacionSnapshot.monto_clp),
             ).filter(LicitacionSnapshot.fecha_sincronizacion >= corte,
-                     cast(LicitacionSnapshot.datos["organismo"], String).isnot(None)
-            ).group_by(cast(LicitacionSnapshot.datos["organismo"], String)
+                     json_as_text(LicitacionSnapshot.datos, "organismo").isnot(None)
+            ).group_by(json_as_text(LicitacionSnapshot.datos, "organismo")
             ).order_by(func.count(LicitacionSnapshot.id).desc()).limit(limit).all()
         return [{"organismo": (r[0] or "").strip('"'), "cantidad": r[1] or 0, "monto_total": r[2] or 0} for r in rows if r[0]]
 
@@ -84,7 +85,7 @@ class AnalyticsEngine:
         corte = self._cutoff(dias)
         with get_db() as db:
             rows = db.query(
-                func.strftime("%Y-%m", LicitacionSnapshot.fecha_publicacion).label("periodo"),
+                date_trunc_expr(LicitacionSnapshot.fecha_publicacion, "month").label("periodo"),
                 func.count(LicitacionSnapshot.id),
                 func.sum(LicitacionSnapshot.monto_clp),
             ).filter(LicitacionSnapshot.fecha_publicacion.isnot(None),
@@ -96,7 +97,7 @@ class AnalyticsEngine:
         corte = self._cutoff(dias)
         with get_db() as db:
             rows = db.query(
-                func.strftime("%Y-%m-%d", LicitacionSnapshot.fecha_sincronizacion).label("fecha"),
+                date_trunc_expr(LicitacionSnapshot.fecha_sincronizacion, "day").label("fecha"),
                 func.count(LicitacionSnapshot.id),
             ).filter(LicitacionSnapshot.fecha_sincronizacion >= corte
             ).group_by("fecha").order_by("fecha").all()
@@ -129,7 +130,7 @@ class AnalyticsEngine:
                 db.query(LicitacionSnapshot)
                 .filter(
                     LicitacionSnapshot.fecha_sincronizacion >= corte,
-                    cast(LicitacionSnapshot.datos["organismo"], String).ilike(f"%{nombre}%"),
+                    json_as_text(LicitacionSnapshot.datos, "organismo").ilike(f"%{nombre}%"),
                 )
                 .limit(200)
                 .all()
