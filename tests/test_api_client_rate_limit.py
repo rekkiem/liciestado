@@ -75,7 +75,16 @@ def test_parse_retry_after_invalid():
 def test_backoff_with_jitter_in_range():
     for attempt in range(5):
         v = _backoff_with_jitter(attempt, base=2.0, cap=30.0)
+        # equal jitter: [exp/2, exp] ⊆ [0, cap]
         assert 0 <= v <= 30.0
+
+
+def test_backoff_429_floor_min_2s():
+    """Sin Retry-After, la espera de 429 no debe ser casi 0 (piso 2s)."""
+    for attempt in range(8):
+        v = _backoff_with_jitter(attempt, base=5.0, cap=90.0, floor=2.0)
+        assert v >= 2.0, f"attempt={attempt} wait={v}"
+        assert v <= 90.0
 
 
 def test_rate_limiter_daily_quota():
@@ -198,3 +207,11 @@ def test_max_retries_default_is_five(mock_sleep):
     with pytest.raises(RateLimitedException):
         client._get("publico/licitaciones.json")
     assert client.session.get.call_count == 5
+
+
+def test_api_rate_per_day_cap(monkeypatch):
+    monkeypatch.setenv("API_RATE_PER_DAY", "10001")
+    import importlib
+    import config as cfg
+    with pytest.raises(Exception):
+        importlib.reload(cfg)
