@@ -45,7 +45,7 @@ def test_quota_persists_to_db(db_bind):
     from app.models import ApiQuotaDaily
     from app.sync_state import fecha_cl_hoy
 
-    rl = RateLimiter(per_second=100, per_day=3)
+    rl = RateLimiter(per_second=100, per_day=3, persist=True)
     rl.acquire()
     rl.acquire()
     rl.acquire()
