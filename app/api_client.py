@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import random
 import re
 import time
@@ -94,6 +95,8 @@ class RateLimiter:
         per_day: int = 10_000,
         circuit_threshold: int = 3,
         circuit_pause_sec: float = 900.0,
+        *,
+        persist: Optional[bool] = None,
     ):
         self.per_second = max(0.1, float(per_second))
         self.per_day = int(per_day)
@@ -106,7 +109,14 @@ class RateLimiter:
         self._day_count = 0
         self._day_key = self._fecha_cl()
         self._quota_exhausted = False
-        self._persist = True
+        if persist is None:
+            # API_QUOTA_PERSIST=0 en conftest / CI unitario
+            persist = os.environ.get("API_QUOTA_PERSIST", "1").lower() not in (
+                "0",
+                "false",
+                "no",
+            )
+        self._persist = bool(persist)
 
         self._consecutive_429_cycles = 0
         self._circuit_open_until: float = 0.0
