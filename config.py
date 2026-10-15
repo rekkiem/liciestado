@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     API_BASE_URL: str = "https://api.mercadopublico.cl/servicios/v1"
     API_RATE_PER_SECOND: float = 5.0
     API_RATE_PER_DAY: int = 10_000
+    MAX_ENRICH_ATTEMPTS: int = 5
     API_ENRICH_RATE_PER_SECOND: float = 2.0
     API_MAX_RETRIES: int = 5
     API_CIRCUIT_BREAKER_THRESHOLD: int = 3
@@ -34,11 +35,8 @@ class Settings(BaseSettings):
     TIMEZONE: str = "America/Santiago"
     ALERT_DEDUP_DAYS: int = 30
     APP_BASE_URL: str = "http://localhost:5000"
-    # Nº de proxies de confianza (nginx). 0 = sin ProxyFix.
     PROXY_COUNT: int = 1
-    # HMAC opcional global para webhooks (mejor: user_configs.webhook_secret)
     WEBHOOK_HMAC_SECRET: str = ""
-    # Rate limit login (intentos / ventana)
     LOGIN_RATE_LIMIT: int = 20
     LOGIN_RATE_WINDOW_SEC: int = 300
 
