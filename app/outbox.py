@@ -2,9 +2,9 @@
 
 - idempotency_key UNIQUE
 - estados: pendiente | enviado | fallido
-- claim: SELECT … FOR UPDATE SKIP LOCKED (Postgres) / BEGIN IMMEDIATE (SQLite)
+- claim: SELECT … FOR UPDATE SKIP LOCKED (Postgres) / SQLite
 - reintentos con backoff exponencial
-- HMAC SHA-256 en webhooks (X-LiciEstado-Signature + Timestamp)
+- HMAC SHA-256 en webhooks
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ _stop = threading.Event()
 
 
 def _now() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def make_idempotency_key(canal: str, alerta_id: Optional[int], destino: str, extra: str = "") -> str:
@@ -48,7 +48,6 @@ def enqueue(
     idempotency_key: Optional[str] = None,
     max_intentos: int = 5,
 ) -> Optional[int]:
-    """Inserta fila pendiente. Si la key ya existe, no duplica."""
     key = idempotency_key or make_idempotency_key(canal, alerta_id, destino)
     row = NotificationOutbox(
         user_id=user_id,
@@ -204,10 +203,16 @@ def process_one(outbox_id: int) -> bool:
             row.enviado_at = _now()
             row.updated_at = _now()
             row.last_error = None
-            if alerta_id and canal == "email":
-                db.query(AlertaGenerada).filter_by(id=alerta_id).update(
-                    {"enviado_email": True}, synchronize_session=False
-                )
+            if canal == "email":
+                ids = []
+                if alerta_id:
+                    ids.append(alerta_id)
+                extra = (row.payload_json or {}).get("alerta_ids") or []
+                ids.extend(int(x) for x in extra if x is not None)
+                if ids:
+                    db.query(AlertaGenerada).filter(AlertaGenerada.id.in_(ids)).update(
+                        {"enviado_email": True}, synchronize_session=False
+                    )
         logger.info("Outbox id=%s enviado canal=%s", outbox_id, canal)
         return True
     except Exception as e:
