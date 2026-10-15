@@ -153,6 +153,9 @@ class LicitacionSnapshot(Base):
     region:              Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     monto_clp:           Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     fecha_sincronizacion: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+    detalle_obtenido_en: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    enrich_attempts:     Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_enrich_error:   Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     def __repr__(self) -> str:
         return f"<LicitacionSnapshot codigo='{self.codigo}'>"
@@ -244,3 +247,37 @@ class NotificationOutbox(Base):
 
     def __repr__(self) -> str:
         return f"<Outbox {self.id} {self.canal} {self.estado} key={self.idempotency_key[:16]}>"
+
+
+class SyncRun(Base):
+    """Corrida de sync/enrich por día (Obj4). estado: completo|incompleto|error."""
+    __tablename__ = "sync_runs"
+    __table_args__ = (
+        Index("ix_sync_runs_kind_fecha", "kind", "fecha"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    fecha: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    estado: Mapped[str] = mapped_column(String(20), nullable=False, default="completo")
+    motivo: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    items_ok: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    items_fail: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<SyncRun {self.kind} {self.fecha} {self.estado}>"
+
+
+class ApiQuotaDaily(Base):
+    """Cuota global diaria del ticket (Obj4). Persistida; no solo RAM."""
+    __tablename__ = "api_quota_daily"
+
+    fecha: Mapped[str] = mapped_column(String(10), primary_key=True)
+    requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    limite: Mapped[int] = mapped_column(Integer, nullable=False, default=10_000)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<ApiQuotaDaily {self.fecha} {self.requests}/{self.limite}>"
