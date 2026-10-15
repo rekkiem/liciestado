@@ -1,15 +1,5 @@
 """
 app/dashboard/auth_routes.py — Rutas de autenticación.
-
-  GET  /landing          → página pública de marketing
-  GET  /login            → formulario de login
-  POST /login
-  GET  /register         → formulario de registro
-  POST /register
-  GET  /logout
-  GET  /configuracion    → perfil + ticket + plan
-  POST /configuracion/ticket
-  POST /configuracion/password
 """
 import logging
 from datetime import datetime, timezone, timedelta
@@ -55,7 +45,7 @@ def login():
         if user:
             login_user(user, remember=remember)
             next_url = request.args.get("next") or url_for("dashboard.home")
-            flash(f"Bienvenido, {user.nombre or user.email.split('@')[0]} 👋", "success")
+            flash(f"Bienvenido, {user.nombre or user.email.split('@')[0]}", "success")
             return redirect(next_url)
         else:
             flash("Email o contraseña incorrectos.", "error")
@@ -87,10 +77,10 @@ def register():
                 db.add(UserConfig(user_id=user.id, notif_mode="digest",
                                   trial_pro_hasta=trial_hasta))
                 db.query(User).filter_by(id=user.id).update({"plan": "free"})
-            flash("¡Cuenta creada! 🎉 Tienes 14 días de Plan Pro de prueba. Ahora configura tu ticket de Mercado Público.", "success")
+            flash("Cuenta creada. 14 días de Plan Pro de prueba. Configura tu ticket.", "success")
             return redirect(url_for("auth.onboarding"))
         except EmailYaRegistrado:
-            flash("Ese email ya está registrado. ¿Quieres iniciar sesión?", "error")
+            flash("Ese email ya está registrado.", "error")
         except PasswordDebil as e:
             flash(str(e), "error")
 
@@ -114,7 +104,7 @@ def configuracion():
     ticket_raw = obtener_ticket_plano(current_user.id)
     if ticket_raw:
         tiene_ticket   = True
-        ticket_preview = ticket_raw[:8] + "…" + ticket_raw[-4:]
+        ticket_preview = ticket_raw[:8] + "\u2026" + ticket_raw[-4:]
 
     with get_db() as db:
         user = db.query(User).filter_by(id=current_user.id).first()
@@ -129,6 +119,7 @@ def configuracion():
         cfg_data = {"notif_mode": cfg.notif_mode if cfg else "digest",
                     "webhook_url": cfg.webhook_url if cfg else None,
                     "webhook_activo": cfg.webhook_activo if cfg else False,
+                    "has_webhook_secret": bool(cfg.webhook_secret) if cfg else False,
                     "trial_pro_hasta": cfg.trial_pro_hasta if cfg else None} if cfg else None
     return render_template(
         "auth/configuracion.html",
@@ -154,7 +145,7 @@ def configuracion_ticket():
         return redirect(url_for("auth.configuracion"))
 
     guardar_ticket(current_user.id, ticket)
-    flash("✅ Ticket guardado y validado correctamente.", "success")
+    flash("Ticket guardado y validado correctamente.", "success")
     return redirect(url_for("auth.configuracion"))
 
 
@@ -186,11 +177,7 @@ def upgrade_plan(plan: str):
     if plan not in ("pro", "free"):
         abort(400)
     if plan == "pro":
-        flash(
-            "El upgrade a Pro permanente aún no está habilitado (falta integración de pagos). "
-            "Si tienes trial activo, sigue disfrutando del Plan Pro hasta que expire.",
-            "warning",
-        )
+        flash("Upgrade Pro permanente aún no habilitado (pagos).", "warning")
         return redirect(url_for("auth.configuracion"))
     with get_db() as db:
         db.query(User).filter_by(id=current_user.id).update({"plan": "free"})
@@ -244,9 +231,11 @@ def onboarding():
 def configuracion_webhook():
     from app.models import UserConfig
     from app.net_safety import validar_webhook_url
+    import secrets as _secrets
     url    = request.form.get("webhook_url", "").strip()
     activo = request.form.get("webhook_activo") == "1"
     modo   = request.form.get("notif_mode", "digest")
+    regen  = request.form.get("regen_webhook_secret") == "1"
 
     if url:
         ok, msg = validar_webhook_url(url)
@@ -254,16 +243,32 @@ def configuracion_webhook():
             flash(f"URL de webhook no permitida: {msg}", "error")
             return redirect(url_for("auth.configuracion"))
 
+    nuevo_secret = None
     with get_db() as db:
         cfg = db.query(UserConfig).filter_by(user_id=current_user.id).first()
         if cfg:
             cfg.webhook_url = url or None
             cfg.webhook_activo = activo and bool(url)
             cfg.notif_mode = modo
+            if url and (not cfg.webhook_secret or regen):
+                nuevo_secret = _secrets.token_urlsafe(32)
+                cfg.webhook_secret = nuevo_secret
         else:
-            db.add(UserConfig(user_id=current_user.id, webhook_url=url or None,
-                              webhook_activo=activo and bool(url), notif_mode=modo))
-    flash("Configuración de notificaciones guardada.", "success")
+            nuevo_secret = _secrets.token_urlsafe(32) if url else None
+            db.add(UserConfig(
+                user_id=current_user.id,
+                webhook_url=url or None,
+                webhook_activo=activo and bool(url),
+                notif_mode=modo,
+                webhook_secret=nuevo_secret,
+            ))
+    if nuevo_secret:
+        flash(
+            f"Webhook actualizado. Guarda tu secreto HMAC (solo se muestra una vez): {nuevo_secret}",
+            "success",
+        )
+    else:
+        flash("Configuración de notificaciones guardada.", "success")
     return redirect(url_for("auth.configuracion"))
 
 
