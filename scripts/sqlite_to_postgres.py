@@ -8,18 +8,8 @@ Características (Architect):
   - Reset de secuencias (setval) tras COPY
   - Conteos por tabla + verificación
   - --dry-run (solo reporta, no escribe)
-  - --batch-size para lotes
-  - Idempotente opcional con --skip-existing (ON CONFLICT DO NOTHING en PK)
-
-Uso:
-  python scripts/sqlite_to_postgres.py \\
-    --sqlite sqlite:///./mercadopublico.db \\
-    --postgres postgresql+psycopg://mp_user:mp_pass@localhost:5432/mp_alertas \\
-    --dry-run
-
-  python scripts/sqlite_to_postgres.py \\
-    --sqlite sqlite:///./mercadopublico.db \\
-    --postgres postgresql+psycopg://mp_user:mp_pass@localhost:5432/mp_alertas
+  - Coerción de tipos (bool, datetime, JSON)
+  - Errores de copia → exit code != 0
 """
 from __future__ import annotations
 
@@ -41,7 +31,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("sqlite_to_postgres")
 
-# Padres primero (FK). Hijos al final.
 TABLE_ORDER = [
     "users",
     "user_tickets",
@@ -93,20 +82,60 @@ def _fetch_rows(eng: Engine, table: str, cols: list[str], batch: int):
             yield [dict(zip(cols, row)) for row in rows]
 
 
-def _prepare_value(table: str, col: str, val: Any) -> Any:
+def _col_types(eng: Engine, table: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for c in inspect(eng).get_columns(table):
+        typ = c.get("type")
+        out[c["name"]] = type(typ).__name__.lower() if typ is not None else ""
+    return out
+
+
+def _prepare_value(table: str, col: str, val: Any, col_type: str = "") -> Any:
     if val is None:
         return None
     json_cols = JSON_COLUMNS.get(table, set())
-    if col in json_cols:
+    if col in json_cols or "json" in col_type:
         if isinstance(val, (dict, list)):
-            return json.dumps(val, ensure_ascii=False)
+            return val
+        if isinstance(val, (bytes, bytearray)):
+            val = val.decode("utf-8", errors="replace")
         if isinstance(val, str):
+            try:
+                return json.loads(val)
+            except Exception:
+                return val
+        return val
+    if "bool" in col_type:
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, (int, float)):
+            return bool(val)
+        if isinstance(val, str):
+            return val.strip().lower() in ("1", "true", "t", "yes", "y")
+        return bool(val)
+    if "date" in col_type or "time" in col_type:
+        if hasattr(val, "isoformat"):
+            return val
+        if isinstance(val, str):
+            from datetime import datetime
+
+            s = val.strip()
+            for fmt in (
+                "%Y-%m-%d %H:%M:%S.%f",
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%dT%H:%M:%S.%f",
+                "%Y-%m-%dT%H:%M:%S",
+                "%Y-%m-%d",
+            ):
+                try:
+                    return datetime.strptime(s[:26], fmt)
+                except ValueError:
+                    continue
             return val
     return val
 
 
 def _reset_sequences(pg: Engine, tables: list[str]) -> None:
-    """Ajusta setval al MAX(id) para cada tabla con columna id serial."""
     with pg.begin() as conn:
         for table in tables:
             if not _table_exists(pg, table):
@@ -125,7 +154,6 @@ def _reset_sequences(pg: Engine, tables: list[str]) -> None:
                     {"t": table},
                 ).scalar()
                 if not seq_name:
-                    logger.debug("Sin secuencia para %s.id", table)
                     continue
                 seq = seq_name
             max_id = conn.execute(
@@ -190,6 +218,7 @@ def migrate(
         copied = 0
         col_list = ", ".join(f'"{c}"' for c in cols)
         placeholders = ", ".join(f":{c}" for c in cols)
+        dst_types = _col_types(dst, table)
         if skip_existing and "id" in cols:
             insert_sql = text(
                 f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders}) '
@@ -200,15 +229,26 @@ def migrate(
                 f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders})'
             )
 
-        with dst.begin() as conn:
-            for batch in _fetch_rows(src, table, cols, batch_size):
-                payload = [
-                    {c: _prepare_value(table, c, row[c]) for c in cols} for row in batch
-                ]
-                if not payload:
-                    continue
-                conn.execute(insert_sql, payload)
-                copied += len(payload)
+        try:
+            with dst.begin() as conn:
+                for batch in _fetch_rows(src, table, cols, batch_size):
+                    payload = [
+                        {
+                            c: _prepare_value(
+                                table, c, row[c], dst_types.get(c, "")
+                            )
+                            for c in cols
+                        }
+                        for row in batch
+                    ]
+                    if not payload:
+                        continue
+                    conn.execute(insert_sql, payload)
+                    copied += len(payload)
+        except Exception as e:
+            logger.exception("Error copiando tabla %s: %s", table, e)
+            print(f"    ERROR en {table}: {e}")
+            return 1
 
         n_dst_after = _count(dst, table)
         print(f"    → copiados={copied:,}  postgres_despues={n_dst_after:,}")
@@ -244,17 +284,8 @@ def main() -> None:
     p.add_argument("--postgres", required=True, help="URL SQLAlchemy PostgreSQL destino")
     p.add_argument("--dry-run", action="store_true", help="Solo reportar conteos")
     p.add_argument("--batch-size", type=int, default=500)
-    p.add_argument(
-        "--skip-existing",
-        action="store_true",
-        help="ON CONFLICT (id) DO NOTHING",
-    )
-    p.add_argument(
-        "--tables",
-        nargs="*",
-        default=None,
-        help="Subconjunto de tablas (default: todas en orden FK)",
-    )
+    p.add_argument("--skip-existing", action="store_true", help="ON CONFLICT (id) DO NOTHING")
+    p.add_argument("--tables", nargs="*", default=None)
     args = p.parse_args()
     code = migrate(
         args.sqlite,
