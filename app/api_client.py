@@ -6,6 +6,7 @@ import random
 import re
 import time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from email.utils import parsedate_to_datetime
 from threading import Lock
 from typing import Any, Dict, Iterator, List, Optional
@@ -15,7 +16,6 @@ import requests
 try:
     from cachetools import TTLCache
 except ImportError:  # pragma: no cover
-    # Fallback mínimo si cachetools no está instalado (tests / entornos mínimos)
     class TTLCache(dict):
         def __init__(self, maxsize=1, ttl=86_400):
             super().__init__()
@@ -26,9 +26,6 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Exceptions
-# ---------------------------------------------------------------------------
 
 class QuotaExhaustedException(Exception):
     """Cuota diaria local agotada o circuit breaker activo por 429s consecutivos."""
@@ -42,15 +39,10 @@ class RateLimitedException(ApiClientException):
     """Se agotaron los reintentos por 429; el servidor sigue pidiendo frenar."""
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 _TICKET_RE = re.compile(r"(?i)(ticket[=:\s]+)([^\s&\"']+)")
 
 
 def redact_secrets(text: str, ticket: Optional[str] = None) -> str:
-    """Elimina el ticket de cualquier mensaje de log o excepción."""
     if not text:
         return text
     out = _TICKET_RE.sub(r"\1[REDACTED]", str(text))
@@ -60,14 +52,13 @@ def redact_secrets(text: str, ticket: Optional[str] = None) -> str:
 
 
 def _parse_retry_after(header_value: Optional[str]) -> Optional[float]:
-    """Parsea Retry-After (segundos o HTTP-date). Devuelve segundos a esperar o None."""
     if not header_value:
         return None
     value = header_value.strip()
     try:
         seconds = float(value)
         if seconds >= 0:
-            return min(seconds, 3600.0)  # techo de seguridad 1h
+            return min(seconds, 3600.0)
     except ValueError:
         pass
     try:
@@ -89,21 +80,13 @@ def _backoff_with_jitter(
     *,
     floor: float = 0.0,
 ) -> float:
-    """Backoff exponencial con equal jitter: exp/2 + U(0, exp/2).
-
-    floor: espera mínima (p.ej. 2s en 429 para no reintentar casi al instante).
-    """
     exp = min(cap, base * (2 ** attempt))
     wait = (exp / 2.0) + random.uniform(0, exp / 2.0)
     return max(floor, wait)
 
 
-# ---------------------------------------------------------------------------
-# Rate limiter + circuit breaker
-# ---------------------------------------------------------------------------
-
 class RateLimiter:
-    """Rate limit por segundo y por día + circuit breaker por 429 consecutivos."""
+    """Rate limit por segundo y por día + circuit breaker. Obj4: cuota en ApiQuotaDaily."""
 
     def __init__(
         self,
@@ -121,12 +104,14 @@ class RateLimiter:
         self._sec_count = 0
         self._sec_reset = time.monotonic() + 1.0
         self._day_count = 0
-        self._day_reset = time.monotonic() + 86_400.0
+        self._day_key = self._fecha_cl()
         self._quota_exhausted = False
+        self._persist = True
 
-        # Circuit breaker
         self._consecutive_429_cycles = 0
         self._circuit_open_until: float = 0.0
+
+        self._load_day_from_db()
 
     @property
     def day_count(self) -> int:
@@ -139,15 +124,64 @@ class RateLimiter:
         with self._lock:
             return time.monotonic() < self._circuit_open_until
 
+    @staticmethod
+    def _fecha_cl() -> str:
+        return datetime.now(ZoneInfo("America/Santiago")).strftime("%Y-%m-%d")
+
+    def _load_day_from_db(self) -> None:
+        if not self._persist:
+            return
+        try:
+            from app.database import get_db
+            from app.models import ApiQuotaDaily
+
+            fecha = self._fecha_cl()
+            with get_db() as db:
+                row = db.query(ApiQuotaDaily).filter_by(fecha=fecha).first()
+                if row:
+                    self._day_count = int(row.requests or 0)
+                    self._day_key = fecha
+                    if self._day_count >= self.per_day:
+                        self._quota_exhausted = True
+        except Exception as e:
+            logger.debug("RateLimiter: no se pudo cargar cuota BD (%s)", e)
+
+    def _persist_day(self) -> None:
+        if not self._persist:
+            return
+        try:
+            from app.database import get_db
+            from app.models import ApiQuotaDaily
+
+            fecha = self._day_key
+            with get_db() as db:
+                row = db.query(ApiQuotaDaily).filter_by(fecha=fecha).first()
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                if row:
+                    row.requests = self._day_count
+                    row.limite = self.per_day
+                    row.updated_at = now
+                else:
+                    db.add(
+                        ApiQuotaDaily(
+                            fecha=fecha,
+                            requests=self._day_count,
+                            limite=self.per_day,
+                            updated_at=now,
+                        )
+                    )
+        except Exception as e:
+            logger.debug("RateLimiter: no se pudo persistir cuota (%s)", e)
+
     def _maybe_reset_day(self) -> None:
-        now = time.monotonic()
-        if now >= self._day_reset:
+        key = self._fecha_cl()
+        if key != self._day_key:
+            self._day_key = key
             self._day_count = 0
-            self._day_reset = now + 86_400.0
             self._quota_exhausted = False
+            self._load_day_from_db()
 
     def record_429_cycle_exhausted(self) -> None:
-        """Llamar cuando un ciclo de reintentos por 429 se agota sin éxito."""
         with self._lock:
             self._consecutive_429_cycles += 1
             if self._consecutive_429_cycles >= self.circuit_threshold:
@@ -188,17 +222,13 @@ class RateLimiter:
 
             self._sec_count += 1
             self._day_count += 1
+            self._persist_day()
 
         if sleep_for > 0:
             time.sleep(sleep_for)
         elif self.per_second <= 5:
-            # Espaciado suave para evitar micro-ráfagas bajo el límite
             time.sleep(max(0.0, (1.0 / self.per_second) * 0.1))
 
-
-# ---------------------------------------------------------------------------
-# Client
-# ---------------------------------------------------------------------------
 
 class MercadoPublicoClient:
     BASE_URL = settings.API_BASE_URL.rstrip("/")
@@ -257,12 +287,11 @@ class MercadoPublicoClient:
                     consecutive_429_in_cycle += 1
                     ra = _parse_retry_after(resp.headers.get("Retry-After"))
                     if ra is not None:
-                        # Jitter pequeño sobre Retry-After, con piso 2s
                         wait = max(2.0, ra + random.uniform(0, 1.5))
                     else:
                         wait = _backoff_with_jitter(attempt, base=5.0, cap=90.0, floor=2.0)
                     logger.warning(
-                        "HTTP 429 (intento %d/%d). Esperando %.1fs…",
+                        "HTTP 429 (intento %d/%d). Esperando %.1fs\u2026",
                         attempt + 1,
                         retries,
                         wait,
@@ -273,7 +302,7 @@ class MercadoPublicoClient:
                 if resp.status_code in (500, 502, 503, 504):
                     wait = _backoff_with_jitter(attempt, base=3.0, cap=60.0)
                     logger.warning(
-                        "HTTP %s (intento %d/%d). Esperando %.1fs…",
+                        "HTTP %s (intento %d/%d). Esperando %.1fs\u2026",
                         resp.status_code,
                         attempt + 1,
                         retries,
@@ -301,7 +330,6 @@ class MercadoPublicoClient:
                     continue
                 raise ApiClientException(safe) from None
 
-        # Agotamos reintentos
         if last_status == 429 or consecutive_429_in_cycle > 0:
             self.rate_limiter.record_429_cycle_exhausted()
             raise RateLimitedException(
@@ -320,74 +348,120 @@ class MercadoPublicoClient:
         codigo=None,
         tipo=None,
     ) -> Iterator[Dict]:
+        """Una petición = un día calendario (`fecha` YYYY-MM-DD), no rango.
+
+        Tras 429/cuota: sync_run incompleto (no lista vacía silenciosa).
+        """
+        from app.sync_state import start_sync_run, finish_sync_run, fecha_cl_hoy
+
         params: Dict[str, Any] = {}
-        if fecha_desde:
-            params["fecha"] = fecha_desde
+        fecha = fecha_desde or fecha_cl_hoy()
+        params["fecha"] = fecha
         if estado:
             params["estado"] = estado
         if codigo:
             params["codigo"] = codigo
         if tipo:
             params["tipo"] = tipo
+        run_id = start_sync_run("licitaciones", fecha)
+        items_ok = 0
         page = 1
-        while True:
-            params["pagina"] = page
-            try:
-                data = self._get("publico/licitaciones.json", params.copy())
-            except (QuotaExhaustedException, RateLimitedException) as e:
-                logger.error("Sync licitaciones interrumpida p%d: %s", page, e)
-                return
-            except ApiClientException as e:
-                logger.error("Error licitaciones p%d: %s", page, e)
-                return
-            items: List[Dict] = data.get("Listado") or []
-            if not items:
-                break
-            for item in items:
-                item["_api_tipo"] = tipo or "licitacion"
-                yield item
-            if len(items) < 1000:
-                break
-            page += 1
+        try:
+            while True:
+                params["pagina"] = page
+                try:
+                    data = self._get("publico/licitaciones.json", params.copy())
+                except (QuotaExhaustedException, RateLimitedException) as e:
+                    logger.error("Sync licitaciones interrumpida p%d: %s", page, e)
+                    finish_sync_run(
+                        run_id,
+                        estado="incompleto",
+                        motivo=type(e).__name__,
+                        items_ok=items_ok,
+                    )
+                    return
+                except ApiClientException as e:
+                    logger.error("Error licitaciones p%d: %s", page, e)
+                    finish_sync_run(
+                        run_id, estado="error", motivo=str(e)[:300], items_ok=items_ok
+                    )
+                    return
+                items: List[Dict] = data.get("Listado") or []
+                if not items:
+                    break
+                for item in items:
+                    item["_api_tipo"] = tipo or "licitacion"
+                    items_ok += 1
+                    yield item
+                if len(items) < 1000:
+                    break
+                page += 1
+            finish_sync_run(run_id, estado="completo", items_ok=items_ok)
+        except GeneratorExit:
+            finish_sync_run(
+                run_id, estado="incompleto", motivo="generator_closed", items_ok=items_ok
+            )
+            raise
 
     def iter_ordenes_compra(
         self, fecha_desde=None, estado=None, codigo=None
     ) -> Iterator[Dict]:
+        """Una petición = un día (`fecha`). 429/cuota \u2192 sync_run incompleto."""
+        from app.sync_state import start_sync_run, finish_sync_run, fecha_cl_hoy
+
         params: Dict[str, Any] = {}
-        if fecha_desde:
-            params["fecha"] = fecha_desde
+        fecha = fecha_desde or fecha_cl_hoy()
+        params["fecha"] = fecha
         if estado:
             params["estado"] = estado
         if codigo:
             params["codigo"] = codigo
+        run_id = start_sync_run("ordenes_compra", fecha)
+        items_ok = 0
         page = 1
-        while True:
-            params["pagina"] = page
-            try:
-                data = self._get("publico/ordenesdecompra.json", params.copy())
-            except (QuotaExhaustedException, RateLimitedException) as e:
-                logger.error("Sync OC interrumpida p%d: %s", page, e)
-                return
-            except ApiClientException as e:
-                logger.error("Error OC p%d: %s", page, e)
-                return
-            items: List[Dict] = data.get("Listado") or []
-            if not items:
-                break
-            for item in items:
-                item["_api_tipo"] = "orden_compra"
-                yield item
-            if len(items) < 1000:
-                break
-            page += 1
+        try:
+            while True:
+                params["pagina"] = page
+                try:
+                    data = self._get("publico/ordenesdecompra.json", params.copy())
+                except (QuotaExhaustedException, RateLimitedException) as e:
+                    logger.error("Sync OC interrumpida p%d: %s", page, e)
+                    finish_sync_run(
+                        run_id,
+                        estado="incompleto",
+                        motivo=type(e).__name__,
+                        items_ok=items_ok,
+                    )
+                    return
+                except ApiClientException as e:
+                    logger.error("Error OC p%d: %s", page, e)
+                    finish_sync_run(
+                        run_id, estado="error", motivo=str(e)[:300], items_ok=items_ok
+                    )
+                    return
+                items: List[Dict] = data.get("Listado") or []
+                if not items:
+                    break
+                for item in items:
+                    item["_api_tipo"] = "orden_compra"
+                    items_ok += 1
+                    yield item
+                if len(items) < 1000:
+                    break
+                page += 1
+            finish_sync_run(run_id, estado="completo", items_ok=items_ok)
+        except GeneratorExit:
+            finish_sync_run(
+                run_id, estado="incompleto", motivo="generator_closed", items_ok=items_ok
+            )
+            raise
 
     def iter_oportunidades(self, fecha_desde=None, estado=None) -> Iterator[Dict]:
-        """Compra ágil (tipo=CO) — no soportada por la API pública v1."""
         logger.warning(
             "compra_agil omitida: la API pública v1 no soporta tipo=CO (HTTP 400)."
         )
         return
-        yield  # noqa: unreachable — mantiene el tipo Iterator
+        yield  # noqa: unreachable
 
     def get_licitacion_detalle(self, codigo: str) -> Optional[Dict]:
         try:
@@ -406,7 +480,6 @@ class MercadoPublicoClient:
 
 
 def make_enrich_client(ticket: Optional[str] = None) -> MercadoPublicoClient:
-    """Cliente preconfigurado para enriquecimiento: ritmo suave (2 req/s por defecto)."""
     rate = getattr(settings, "API_ENRICH_RATE_PER_SECOND", 2.0)
     return MercadoPublicoClient(
         ticket=ticket,
