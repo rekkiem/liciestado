@@ -1,16 +1,5 @@
 """
 app/models.py — Modelos ORM multi-tenant.
-
-Tablas nuevas:
-  users           → usuarios del SaaS
-  user_tickets    → tickets de API de Mercado Público por usuario (cifrados)
-
-Tablas modificadas:
-  reglas_usuario  → agrega user_id (FK users.id)
-  alertas_generadas → agrega user_id
-
-Tablas compartidas (caché pública):
-  licitaciones_snapshot → sin user_id (datos públicos de la API)
 """
 from __future__ import annotations
 from datetime import datetime, timezone
@@ -59,9 +48,6 @@ class User(UserMixin, Base):
 
     @property
     def es_pro(self) -> bool:
-        """Pro permanente o trial activo (trial_pro_hasta en UserConfig).
-        Usa solo datos ya cargados (joinedload en user_loader); no abre sesión.
-        """
         if self.plan in ("pro", "enterprise"):
             return True
         cfg = self.__dict__.get("config", None)
@@ -142,7 +128,6 @@ class AlertaGenerada(Base):
     regla_id:         Mapped[int]  = mapped_column(Integer,
                           ForeignKey("reglas_usuario.id", ondelete="CASCADE"), nullable=False)
     entidad_id:       Mapped[str]  = mapped_column(String(150), nullable=False, index=True)
-    # Compat BD antigua: columna NOT NULL residual; siempre rellenar desde la regla
     tipo_entidad:     Mapped[str]  = mapped_column(String(50), nullable=False, default="licitacion")
     datos_resumen:    Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     fecha_alerta:     Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
@@ -174,7 +159,6 @@ class LicitacionSnapshot(Base):
 
 
 class UserConfig(Base):
-    """Configuración de notificaciones y preferencias por usuario."""
     __tablename__ = "user_configs"
 
     id:              Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -186,6 +170,7 @@ class UserConfig(Base):
     webhook_activo:  Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     trial_pro_hasta: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     notif_dashboard: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    webhook_secret:  Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     user: Mapped["User"] = relationship("User", backref=backref("config", uselist=False))
 
@@ -226,3 +211,33 @@ class ApiQuotaLog(Base):
 
     def __repr__(self) -> str:
         return f"<ApiQuotaLog user={self.user_id} fecha={self.fecha} req={self.requests}>"
+
+
+class NotificationOutbox(Base):
+    """Cola durable de notificaciones (email/webhook) con idempotencia (Obj3)."""
+    __tablename__ = "notification_outbox"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    alerta_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    canal: Mapped[str] = mapped_column(String(20), nullable=False)
+    destino: Mapped[str] = mapped_column(String(512), nullable=False)
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    estado: Mapped[str] = mapped_column(String(20), nullable=False, default="pendiente")
+    intentos: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_intentos: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    next_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    enviado_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_outbox_idempotency"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Outbox {self.id} {self.canal} {self.estado} key={self.idempotency_key[:16]}>"
