@@ -4,7 +4,7 @@ app/scheduler.py — Scheduler multi-tenant con webhooks, digest y quota trackin
 from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -12,50 +12,81 @@ import pytz
 
 from config import settings
 from app.database import get_db
-from app.models import (
-    User, UserTicket, UserConfig, ReglaUsuario, AlertaGenerada, LicitacionSnapshot, ApiQuotaLog,
-)
+from app.models import (ReglaUsuario, AlertaGenerada, LicitacionSnapshot,
+                        User, UserTicket, UserConfig, ApiQuotaLog)
+from app.normalizer import normalizar_entidad, datos_resumen
+from app.filter_engine import evaluar_regla
 from app.email_service import encolar_alerta, encolar_resumen_admin, encolar_digest
-from app.filter_engine import evaluar_filtros
-from app.normalizer import normalizar_licitacion
 
 logger = logging.getLogger(__name__)
 _scheduler: Optional[BackgroundScheduler] = None
 
 
-def _registrar_quota(user_id: int, n_requests: int) -> None:
-    if n_requests <= 0:
-        return
+def _incrementar_quota(user_id: int, n: int = 1):
     fecha = datetime.utcnow().strftime("%Y-%m-%d")
     with get_db() as db:
-        row = db.query(ApiQuotaLog).filter_by(user_id=user_id, fecha=fecha).first()
-        if row:
-            row.requests = int(row.requests or 0) + n_requests
+        q = db.query(ApiQuotaLog).filter_by(user_id=user_id, fecha=fecha).first()
+        if q:
+            q.requests += n
         else:
-            db.add(ApiQuotaLog(
-                user_id=user_id, fecha=fecha, requests=n_requests,
-                limite=settings.API_RATE_PER_DAY,
-            ))
+            db.add(ApiQuotaLog(user_id=user_id, fecha=fecha, requests=n, limite=settings.API_RATE_PER_DAY))
+
+
+def _quota_disponible(user_id: int) -> int:
+    fecha = datetime.utcnow().strftime("%Y-%m-%d")
+    with get_db() as db:
+        q = db.query(ApiQuotaLog).filter_by(user_id=user_id, fecha=fecha).first()
+        usados = q.requests if q else 0
+        return max(0, settings.API_RATE_PER_DAY - usados)
 
 
 def _sincronizar_tipo(tipo: str, ticket: str, user_id: int, dias: int = 1) -> List[Dict]:
-    from app.api_client import MercadoPublicoClient
-    client = MercadoPublicoClient(ticket=ticket)
-    entidades_norm: List[Dict] = []
-    try:
-        if tipo == "orden_compra":
-            raw = list(client.iter_ordenes_compra(dias=dias))
-        else:
-            raw = list(client.iter_licitaciones(dias=dias))
-        _registrar_quota(user_id, max(1, len(raw)))
-        for item in raw:
-            try:
-                entidades_norm.append(normalizar_licitacion(item, tipo=tipo))
-            except Exception:
-                logger.exception("Normalizar falló")
-    except Exception:
-        logger.exception("[SYNC user=%d] tipo=%s", user_id, tipo)
+    from app.api_client import MercadoPublicoClient, QuotaExhaustedException
+
+    if tipo == "compra_agil":
+        logger.warning("[SYNC] compra_agil omitida — API no soporta tipo=CO")
         return []
+
+    MAX_POR_TIPO = {"licitacion": 50_000, "orden_compra": 20_000}
+    max_reg = MAX_POR_TIPO.get(tipo, 5_000)
+
+    disponible = _quota_disponible(user_id)
+    if disponible < 10:
+        logger.warning("[SYNC] user_id=%d sin cuota disponible (%d restantes)", user_id, disponible)
+        return []
+
+    client = MercadoPublicoClient(ticket=ticket)
+    fecha_api = client.to_api_date(datetime.now() - timedelta(days=dias))
+    iterator = (client.iter_licitaciones(fecha_desde=fecha_api)
+                if tipo == "licitacion"
+                else client.iter_ordenes_compra(fecha_desde=fecha_api))
+
+    logger.info("[SYNC user=%d] Tipo=%s desde %s", user_id, tipo, fecha_api)
+    entidades_norm: List[Dict] = []
+    seen: set = set()
+    req_count = 0
+
+    try:
+        for raw in iterator:
+            entidad = normalizar_entidad(raw, tipo)
+            if not entidad:
+                continue
+            codigo = entidad.get("codigo", "")
+            if not codigo or codigo in seen:
+                continue
+            seen.add(codigo)
+            entidades_norm.append(entidad)
+            req_count += 1
+            if req_count >= min(max_reg, disponible):
+                logger.info("[SYNC] Límite alcanzado (%d)", req_count)
+                break
+    except QuotaExhaustedException:
+        logger.warning("[SYNC] Cuota agotada user=%d tras %d items", user_id, req_count)
+    except Exception:
+        logger.exception("[SYNC] Error tipo=%s user=%d", tipo, user_id)
+
+    if req_count:
+        _incrementar_quota(user_id, max(1, req_count // 100 + 1))
 
     if not entidades_norm:
         return []
@@ -112,7 +143,7 @@ def _evaluar_reglas_sobre_entidades(reglas, entidades, user_id, notif_mode="dige
 
     with get_db() as db:
         for regla in reglas:
-            coincidencias = [e for e in entidades if evaluar_filtros(e, regla.filtros or {})]
+            coincidencias = [e for e in entidades if evaluar_regla(regla, e)]
             if not coincidencias:
                 continue
             existentes = {
@@ -126,15 +157,7 @@ def _evaluar_reglas_sobre_entidades(reglas, entidades, user_id, notif_mode="dige
                 eid = str(entidad.get("codigo") or entidad.get("id") or "")
                 if not eid or eid in ya_alertados:
                     continue
-                resumen = {
-                    "codigo": entidad.get("codigo"),
-                    "titulo": entidad.get("titulo"),
-                    "organismo": entidad.get("organismo"),
-                    "monto_clp": entidad.get("monto_clp"),
-                    "region": entidad.get("region"),
-                    "tipo": entidad.get("tipo", "licitacion"),
-                    "link": entidad.get("link_detalle") or entidad.get("link"),
-                }
+                resumen = datos_resumen(entidad)
                 alerta = AlertaGenerada(
                     user_id=user_id, regla_id=regla.id, entidad_id=eid,
                     tipo_entidad=getattr(regla, "tipo_entidad", None) or "licitacion",
@@ -247,7 +270,6 @@ def ejecutar_regla_manualmente(regla_id: int, ticket_override: Optional[str] = N
         regla = db.query(ReglaUsuario).filter_by(id=regla_id).first()
         if not regla:
             return {"error": "Regla no encontrada"}
-        user = db.query(User).filter_by(id=regla.user_id).first()
         ticket = ticket_override
         if not ticket:
             tr = db.query(UserTicket).filter_by(user_id=regla.user_id, activo=True).first()
