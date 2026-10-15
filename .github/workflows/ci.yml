@@ -78,7 +78,7 @@ jobs:
         run: |
           python -m alembic upgrade head
           python -m alembic current
-          python -m alembic check || true
+          python -m alembic check
 
       - name: Pytest
         run: pytest -q --tb=short
