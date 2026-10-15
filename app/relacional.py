@@ -210,6 +210,7 @@ def upsert_snapshot_relacional(db, snap, dry_run: bool = False) -> str:
                 payload=extracted["payload"],
             )
         )
+        db.flush()
 
     db.query(Item).filter_by(licitacion_id=existing.id).delete()
     for it in extracted["items"]:
@@ -245,4 +246,5 @@ def upsert_snapshot_relacional(db, snap, dry_run: bool = False) -> str:
                 fecha=a.get("fecha"),
             )
         )
+    db.flush()
     return status
