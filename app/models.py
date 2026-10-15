@@ -7,7 +7,7 @@ from typing import Optional
 
 from flask_login import UserMixin
 from sqlalchemy import (
-    Boolean, DateTime, ForeignKey, Index, Integer, JSON,
+    Boolean, DateTime, ForeignKey, Index, Integer, JSON, Numeric,
     String, Text, UniqueConstraint, func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship, backref
@@ -281,3 +281,96 @@ class ApiQuotaDaily(Base):
 
     def __repr__(self) -> str:
         return f"<ApiQuotaDaily {self.fecha} {self.requests}/{self.limite}>"
+
+
+# ─── Obj5: modelo relacional (snapshot JSON sigue vigente) ───────────────────
+
+class Organismo(Base):
+    __tablename__ = "organismos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    codigo: Mapped[str] = mapped_column(String(40), unique=True, nullable=False, index=True)
+    nombre: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    region: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<Organismo codigo={self.codigo!r}>"
+
+
+class Licitacion(Base):
+    __tablename__ = "licitaciones"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    codigo: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    tipo: Mapped[str] = mapped_column(String(30), nullable=False, default="licitacion")
+    titulo: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    estado: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    fecha_publicacion: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    fecha_cierre: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    monto_clp: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    organismo_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("organismos.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    link_detalle: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    def __repr__(self) -> str:
+        return f"<Licitacion codigo={self.codigo!r}>"
+
+
+class LicitacionVersion(Base):
+    __tablename__ = "licitacion_versiones"
+    __table_args__ = (
+        UniqueConstraint("licitacion_id", "content_hash", name="uq_lic_version_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    licitacion_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("licitaciones.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+
+
+class Item(Base):
+    __tablename__ = "items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    licitacion_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("licitaciones.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    codigo_item: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    descripcion: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cantidad: Mapped[Optional[float]] = mapped_column(Numeric(18, 4), nullable=True)
+    unidad: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    monto_unitario: Mapped[Optional[float]] = mapped_column(Numeric(18, 2), nullable=True)
+
+
+class Proveedor(Base):
+    __tablename__ = "proveedores"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    rut: Mapped[str] = mapped_column(String(12), unique=True, nullable=False, index=True)
+    nombre: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<Proveedor rut={self.rut!r}>"
+
+
+class Adjudicacion(Base):
+    __tablename__ = "adjudicaciones"
+    __table_args__ = (
+        Index("ix_adj_lic_prov", "licitacion_id", "proveedor_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    licitacion_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("licitaciones.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    proveedor_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("proveedores.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    monto: Mapped[Optional[float]] = mapped_column(Numeric(18, 2), nullable=True)
+    fecha: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
