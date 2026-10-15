@@ -1,25 +1,25 @@
-"""Obj3: outbox idempotencia y claim básico (SQLite en memoria aislado)."""
+"""Obj3: outbox idempotencia, lease claim, reaper (SQLite StaticPool)."""
 from __future__ import annotations
 
 import os
+import threading
 import uuid
+from datetime import timedelta
 
-# Forzar memoria: setdefault NO basta si .env ya definió DATABASE_URL
 os.environ["DATABASE_URL"] = "sqlite://"
 os.environ.setdefault("SECRET_KEY", "test-secret-key-at-least-32-chars-long")
 
 import pytest
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 
 @pytest.fixture(scope="module")
 def outbox_bind():
-    """Engine :memory: compartido (StaticPool) + SessionLocal rebind."""
     from app import database as dbmod
     from app.database import Base
-    import app.models  # noqa: F401 — registra NotificationOutbox
+    import app.models  # noqa: F401
 
     engine = create_engine(
         "sqlite://",
@@ -38,6 +38,9 @@ def outbox_bind():
     dbmod.SessionLocal = sessionmaker(
         bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
     )
+    import app.db_dialect as dia
+
+    dia.is_postgres = lambda: False  # type: ignore
     return engine
 
 
@@ -72,15 +75,17 @@ def test_idempotency_key_unique(outbox_bind):
         alerta_id=1,
         idempotency_key=key,
     )
-    assert id1 is not None, "primer enqueue no debe devolver None"
-    assert id2 is None, "segundo enqueue con misma key debe ser dedupe"
+    assert id1 is not None
+    assert id2 is None
     with get_db() as db:
         n = db.query(NotificationOutbox).filter_by(idempotency_key=key).count()
     assert n == 1
 
 
-def test_claim_batch_returns_pending(outbox_bind):
+def test_claim_batch_sets_procesando(outbox_bind):
     from app.outbox import enqueue, make_idempotency_key, claim_batch
+    from app.database import get_db
+    from app.models import NotificationOutbox
 
     suffix = uuid.uuid4().hex
     key = make_idempotency_key("email", None, f"a-{suffix}@b.cl", "claim")
@@ -91,6 +96,70 @@ def test_claim_batch_returns_pending(outbox_bind):
         idempotency_key=key,
     )
     assert rid is not None
-    ids = claim_batch(limit=50)
-    assert isinstance(ids, list)
+    ids = claim_batch(limit=50, worker_id="w-test")
     assert rid in ids
+    with get_db() as db:
+        row = db.query(NotificationOutbox).filter_by(id=rid).first()
+        assert row.estado == "procesando"
+        assert row.locked_by == "w-test"
+
+
+def test_double_worker_single_claim(outbox_bind):
+    from app.outbox import enqueue, make_idempotency_key, claim_batch
+
+    suffix = uuid.uuid4().hex
+    key = make_idempotency_key("email", None, f"dw-{suffix}@b.cl", "dw")
+    rid = enqueue(
+        canal="email",
+        destino=f"dw-{suffix}@b.cl",
+        payload={"tipo": "alerta", "entidad": {}},
+        idempotency_key=key,
+    )
+    results = []
+
+    def _claim(wid):
+        results.append(claim_batch(limit=10, worker_id=wid))
+
+    t1 = threading.Thread(target=_claim, args=("worker-A",))
+    t2 = threading.Thread(target=_claim, args=("worker-B",))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    claimed = [i for batch in results for i in batch]
+    assert claimed.count(rid) == 1, f"doble claim: {results}"
+
+
+def test_reaper_expired_lease(outbox_bind):
+    from app.outbox import (
+        enqueue,
+        make_idempotency_key,
+        claim_batch,
+        reaper_expired_leases,
+        LEASE_SECONDS,
+        _now,
+    )
+    from app.database import get_db, engine
+    from app.models import NotificationOutbox
+
+    suffix = uuid.uuid4().hex
+    key = make_idempotency_key("email", None, f"rp-{suffix}@b.cl", "rp")
+    rid = enqueue(
+        canal="email",
+        destino=f"rp-{suffix}@b.cl",
+        payload={"tipo": "alerta", "entidad": {}},
+        idempotency_key=key,
+    )
+    claim_batch(limit=1, worker_id="old-worker")
+    old = _now() - timedelta(seconds=LEASE_SECONDS + 10)
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE notification_outbox SET locked_at = :old WHERE id = :id"),
+            {"old": old, "id": rid},
+        )
+    n = reaper_expired_leases()
+    assert n >= 1
+    with get_db() as db:
+        row = db.query(NotificationOutbox).filter_by(id=rid).first()
+        assert row.estado == "pendiente"
+        assert row.locked_by is None
