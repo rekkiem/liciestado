@@ -7,7 +7,7 @@ from typing import Optional
 
 from flask_login import UserMixin
 from sqlalchemy import (
-    Boolean, DateTime, ForeignKey, Integer, JSON,
+    Boolean, DateTime, ForeignKey, Index, Integer, JSON,
     String, Text, UniqueConstraint, func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship, backref
@@ -214,7 +214,7 @@ class ApiQuotaLog(Base):
 
 
 class NotificationOutbox(Base):
-    """Cola durable de notificaciones (email/webhook) con idempotencia (Obj3)."""
+    """Cola durable (email/webhook). Estados: pendiente|procesando|enviado|fallido."""
     __tablename__ = "notification_outbox"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -231,12 +231,15 @@ class NotificationOutbox(Base):
     max_intentos: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     next_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    locked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    locked_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     enviado_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_outbox_idempotency"),
+        Index("ix_outbox_claim", "estado", "next_retry_at"),
     )
 
     def __repr__(self) -> str:
