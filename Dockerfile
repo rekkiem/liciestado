@@ -24,7 +24,7 @@ LABEL version="1.0.0"
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=5000 \
-    DATABASE_URL=sqlite:////data/mercadopublico.db \
+    DATABASE_URL=postgresql+psycopg://mp_user:mp_pass@db:5432/mp_alertas \
     TZ=America/Santiago
 
 # Runtime deps mínimas (para PostgreSQL si se usa)
@@ -56,6 +56,10 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
 
 EXPOSE ${PORT:-5000}
 
-# Punto de entrada: gunicorn en producción, python main.py en desarrollo
-ENTRYPOINT ["python", "main.py"]
+# Entrypoint: wait PG + alembic upgrade + main.py
+USER root
+RUN chmod +x /app/scripts/docker_entrypoint.sh
+USER appuser
+
+ENTRYPOINT ["/app/scripts/docker_entrypoint.sh"]
 CMD []

@@ -16,7 +16,8 @@ from flask import (
     request, url_for, Response,
 )
 from flask_login import login_required, current_user
-from sqlalchemy import cast, String, func
+from app.db_dialect import json_as_text
+from sqlalchemy import func
 
 from app.analytics import AnalyticsEngine, REGIONES_CHILE
 from app.database import get_db
@@ -201,7 +202,7 @@ def alertas():
     with get_db() as db:
         q = db.query(AlertaGenerada).filter_by(user_id=_u())
         if tipo_filtro:
-            q = q.filter(cast(AlertaGenerada.datos_resumen["tipo"], String) == tipo_filtro)
+            q = q.filter(json_as_text(AlertaGenerada.datos_resumen, "tipo") == tipo_filtro)
         if regla_filtro:
             try:
                 q = q.filter(AlertaGenerada.regla_id == int(regla_filtro))
@@ -279,7 +280,7 @@ def licitaciones_browser():
             like = f"%{q}%"
             base_q = base_q.filter(
                 LicitacionSnapshot.codigo.ilike(like)
-                | cast(LicitacionSnapshot.datos["titulo"], String).ilike(like)
+                | json_as_text(LicitacionSnapshot.datos, "titulo").ilike(like)
             )
         if f_mmin:
             try:
@@ -292,7 +293,7 @@ def licitaciones_browser():
             except ValueError:
                 pass
         if f_org:
-            base_q = base_q.filter(cast(LicitacionSnapshot.datos["organismo"], String).ilike(f"%{f_org}%"))
+            base_q = base_q.filter(json_as_text(LicitacionSnapshot.datos, "organismo").ilike(f"%{f_org}%"))
         orden_map = {
             "sinc_desc": LicitacionSnapshot.fecha_sincronizacion.desc(),
             "sinc_asc": LicitacionSnapshot.fecha_sincronizacion.asc(),
@@ -368,7 +369,7 @@ def licitaciones_export_csv():
             like = f"%{q}%"
             base_q = base_q.filter(
                 LicitacionSnapshot.codigo.ilike(like)
-                | cast(LicitacionSnapshot.datos["titulo"], String).ilike(like)
+                | json_as_text(LicitacionSnapshot.datos, "titulo").ilike(like)
             )
         snaps = base_q.order_by(LicitacionSnapshot.fecha_sincronizacion.desc()).limit(5000).all()
     buf = io.StringIO()
