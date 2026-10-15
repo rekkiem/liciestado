@@ -108,10 +108,22 @@ def reaper_expired_leases() -> int:
 
 
 def claim_batch(limit: int = 10, worker_id: Optional[str] = None) -> List[int]:
+    """Reclama filas pendiente\u2192procesando. Solo devuelve IDs cuyo UPDATE gan\u00f3."""
     reaper_expired_leases()
     wid = worker_id or _WORKER_ID
     now = _now()
-    ids: List[int] = []
+    claimed: List[int] = []
+
+    update_sql = text(
+        """
+        UPDATE notification_outbox
+           SET estado = 'procesando',
+               locked_at = :now,
+               locked_by = :wid,
+               updated_at = :now
+         WHERE id = :id AND estado = 'pendiente'
+        """
+    )
 
     if is_postgres():
         with engine.begin() as conn:
@@ -128,51 +140,36 @@ def claim_batch(limit: int = 10, worker_id: Optional[str] = None) -> List[int]:
                 ),
                 {"now": now, "lim": limit},
             ).fetchall()
-            ids = [r[0] for r in rows]
-            for i in ids:
-                conn.execute(
-                    text(
-                        """
-                        UPDATE notification_outbox
-                           SET estado = 'procesando',
-                               locked_at = :now,
-                               locked_by = :wid,
-                               updated_at = :now
-                         WHERE id = :id AND estado = 'pendiente'
-                        """
-                    ),
-                    {"now": now, "wid": wid, "id": i},
-                )
+            for (i,) in rows:
+                res = conn.execute(update_sql, {"now": now, "wid": wid, "id": i})
+                if (res.rowcount or 0) == 1:
+                    claimed.append(i)
     else:
-        with engine.begin() as conn:
-            rows = conn.execute(
-                text(
-                    """
-                    SELECT id FROM notification_outbox
-                    WHERE estado = 'pendiente'
-                      AND (next_retry_at IS NULL OR next_retry_at <= :now)
-                    ORDER BY id
-                    LIMIT :lim
-                    """
-                ),
-                {"now": now, "lim": limit},
-            ).fetchall()
-            ids = [r[0] for r in rows]
-            for i in ids:
-                conn.execute(
+        # SQLite: BEGIN IMMEDIATE serializa writers (evita doble claim en threads)
+        with engine.connect() as conn:
+            conn.execute(text("BEGIN IMMEDIATE"))
+            try:
+                rows = conn.execute(
                     text(
                         """
-                        UPDATE notification_outbox
-                           SET estado = 'procesando',
-                               locked_at = :now,
-                               locked_by = :wid,
-                               updated_at = :now
-                         WHERE id = :id AND estado = 'pendiente'
+                        SELECT id FROM notification_outbox
+                        WHERE estado = 'pendiente'
+                          AND (next_retry_at IS NULL OR next_retry_at <= :now)
+                        ORDER BY id
+                        LIMIT :lim
                         """
                     ),
-                    {"now": now, "wid": wid, "id": i},
-                )
-    return ids
+                    {"now": now, "lim": limit},
+                ).fetchall()
+                for (i,) in rows:
+                    res = conn.execute(update_sql, {"now": now, "wid": wid, "id": i})
+                    if (res.rowcount or 0) == 1:
+                        claimed.append(i)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+    return claimed
 
 
 def _sign_payload(body: bytes, secret: str, ts: str) -> str:
