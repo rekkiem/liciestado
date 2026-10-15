@@ -1,5 +1,6 @@
 from flask import Flask, redirect, url_for
 from flask_login import LoginManager
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from config import settings
 
@@ -16,16 +17,18 @@ def create_app() -> Flask:
     check_insecure_defaults()
 
     app = Flask(__name__, template_folder="templates", static_folder="static")
+    # Detrás de nginx: X-Forwarded-For / Proto (Obj3)
+    n = int(getattr(settings, "PROXY_COUNT", 0) or 0)
+    if n > 0:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=n, x_proto=n, x_host=n)
     app.config["SECRET_KEY"] = settings.SECRET_KEY
     app.config["WTF_CSRF_ENABLED"] = not app.config.get("TESTING", False)
     app.config["WTF_CSRF_TIME_LIMIT"] = 3600
 
-    # CSRF
     from app.security import csrf, add_security_headers
     csrf.init_app(app)
     app.after_request(add_security_headers)
 
-    # Flask-Login
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"
     login_manager.login_message = "Inicia sesión para continuar."
