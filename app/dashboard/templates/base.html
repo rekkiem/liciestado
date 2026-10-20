@@ -167,15 +167,48 @@ input:focus, select:focus, textarea:focus {
   border-color: var(--primary);
 }
 label { font-size: 12px; color: var(--text-muted); font-weight: 500; }
-@media (max-width: 768px) {
-  .sidebar { transform: translateX(-100%); }
+.menu-toggle {
+  display: none;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  width: 40px; height: 40px;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  z-index: 40;
+}
+@media (max-width: 1100px) {
+  .content { padding: 18px 16px; }
+  .topbar { padding: 12px 16px; }
+}
+@media (max-width: 900px) {
+  .menu-toggle { display: inline-flex; }
+  .sidebar {
+    transform: translateX(-100%);
+    transition: transform .2s ease;
+    z-index: 60;
+  }
+  body.sidebar-open .sidebar { transform: translateX(0); }
+  body.sidebar-open .sidebar-overlay { display: block; }
   .main { margin-left: 0; }
+  .topbar h1 { font-size: 16px; }
 }
 </style>
 {% block extra_head %}{% endblock %}
 </head>
 <body>
-<aside class="sidebar">
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="document.body.classList.remove('sidebar-open')"></div>
+<aside class="sidebar" id="appSidebar">
   <div class="sidebar-logo"><span>Lici</span>Estado</div>
 
   <div class="nav-section">Principal</div>
@@ -224,8 +257,11 @@ label { font-size: 12px; color: var(--text-muted); font-weight: 500; }
 
 <div class="main">
   <div class="topbar">
-    <h1>{% block topbar_title %}Dashboard{% endblock %}</h1>
-    <div style="font-size:13px;color:var(--text-muted)">
+    <div style="display:flex;align-items:center;gap:12px;min-width:0">
+      <button type="button" class="menu-toggle" id="menuToggle" aria-label="Abrir menú">☰</button>
+      <h1 style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{% block topbar_title %}Dashboard{% endblock %}</h1>
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40vw">
       {% if current_user.is_authenticated %}{{ current_user.email }}{% endif %}
     </div>
   </div>
@@ -241,5 +277,20 @@ label { font-size: 12px; color: var(--text-muted); font-weight: 500; }
   </div>
 </div>
 {% block extra_js %}{% endblock %}
+<script>
+(function () {
+  var btn = document.getElementById('menuToggle');
+  if (btn) {
+    btn.addEventListener('click', function () {
+      document.body.classList.toggle('sidebar-open');
+    });
+  }
+  document.querySelectorAll('.sidebar .nav-item').forEach(function (a) {
+    a.addEventListener('click', function () {
+      document.body.classList.remove('sidebar-open');
+    });
+  });
+})();
+</script>
 </body>
 </html>
