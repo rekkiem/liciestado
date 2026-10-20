@@ -52,4 +52,17 @@ def create_app() -> Flask:
             return redirect(url_for("dashboard.home"))
         return redirect(url_for("auth.landing"))
 
+    @app.route("/healthz")
+    def healthz():
+        """Obj6: liveness sin auth. 200 si la app responde; 503 si BD no responde."""
+        from flask import jsonify
+        from sqlalchemy import text
+        try:
+            from app.database import engine
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return jsonify({"status": "ok"}), 200
+        except Exception as e:
+            return jsonify({"status": "error", "detail": str(e)[:200]}), 503
+
     return app
