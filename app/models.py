@@ -374,3 +374,27 @@ class Adjudicacion(Base):
     )
     monto: Mapped[Optional[float]] = mapped_column(Numeric(18, 2), nullable=True)
     fecha: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+# ─── Obj6: gold set (anotación humana; PDFs los aporta Rafa) ─────────────────
+
+class GoldBase(Base):
+    """Ficha de anotación para evaluación de extracción de bases PDF."""
+    __tablename__ = "gold_bases"
+    __table_args__ = (
+        UniqueConstraint("codigo", "vertical", name="uq_gold_codigo_vertical"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    codigo: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    vertical: Mapped[str] = mapped_column(String(30), nullable=False)  # TI | Construccion
+    titulo: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    pdf_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    # anotacion: requisitos_obligatorios, plazos, garantias, criterios, documentos_exigidos
+    anotacion: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    notas: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    def __repr__(self) -> str:
+        return f"<GoldBase {self.codigo} {self.vertical}>"
