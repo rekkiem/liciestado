@@ -1,146 +1,108 @@
 {% extends "base.html" %}
-{% block title %}Configuración
-  <!-- Notificaciones -->
-  <div class="config-card">
-    <div class="config-hdr">🔔 Notificaciones</div>
-    <div class="config-body">
-      <form method="POST" action="/configuracion/webhook">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="form-field">
-          <label>Modo de alerta</label>
-          <select name="notif_mode" style="width:100%;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);border-radius:var(--radius);padding:9px 12px;font-size:13px;outline:none">
-            <option value="digest" {% if not cfg or cfg.notif_mode=='digest' %}selected{% endif %}>📬 Digest diario (1 email/día con todas las alertas)</option>
-            <option value="realtime" {% if cfg and cfg.notif_mode=='realtime' %}selected{% endif %}>⚡ Tiempo real (email por cada alerta nueva)</option>
-          </select>
-          <div class="hint">El digest llega a las 8 AM con todas las coincidencias del día anterior.</div>
-        </div>
-        <div class="form-field">
-          <label>Webhook URL (opcional)</label>
-          <input type="url" name="webhook_url" value="{{ cfg.webhook_url or '' if cfg else '' }}"
-                 placeholder="https://hooks.slack.com/services/...">
-          <div class="hint">Recibirás un POST JSON por cada alerta nueva. Compatible con Slack, Teams, Zapier, n8n.</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
-          <input type="checkbox" name="webhook_activo" value="1"
-                 {% if cfg and cfg.webhook_activo %}checked{% endif %} id="waCheck">
-          <label for="waCheck" style="font-size:13px;color:var(--text-muted)">Activar webhook</label>
-        </div>
-        <button type="submit" class="btn btn-ghost">Guardar notificaciones</button>
-      </form>
-    </div>
-  </div>
-
-  <!-- Export alertas -->
-  <div class="config-card">
-    <div class="config-hdr">📤 Exportar mis alertas</div>
-    <div class="config-body" style="display:flex;flex-direction:column;gap:8px">
-      <p style="font-size:13px;color:var(--text-muted)">Descarga todas tus alertas históricas en CSV (hasta 5.000 registros).</p>
-      <a href="/alertas/export.csv" class="btn btn-ghost" style="text-align:center">⬇ Descargar alertas CSV</a>
-    </div>
-  </div>
-{% endblock %}
-{% block topbar_title %}Configuración de cuenta
-  <!-- Notificaciones -->
-  <div class="config-card">
-    <div class="config-hdr">🔔 Notificaciones</div>
-    <div class="config-body">
-      <form method="POST" action="/configuracion/webhook">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="form-field">
-          <label>Modo de alerta</label>
-          <select name="notif_mode" style="width:100%;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);border-radius:var(--radius);padding:9px 12px;font-size:13px;outline:none">
-            <option value="digest" {% if not cfg or cfg.notif_mode=='digest' %}selected{% endif %}>📬 Digest diario (1 email/día con todas las alertas)</option>
-            <option value="realtime" {% if cfg and cfg.notif_mode=='realtime' %}selected{% endif %}>⚡ Tiempo real (email por cada alerta nueva)</option>
-          </select>
-          <div class="hint">El digest llega a las 8 AM con todas las coincidencias del día anterior.</div>
-        </div>
-        <div class="form-field">
-          <label>Webhook URL (opcional)</label>
-          <input type="url" name="webhook_url" value="{{ cfg.webhook_url or '' if cfg else '' }}"
-                 placeholder="https://hooks.slack.com/services/...">
-          <div class="hint">Recibirás un POST JSON por cada alerta nueva. Compatible con Slack, Teams, Zapier, n8n.</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
-          <input type="checkbox" name="webhook_activo" value="1"
-                 {% if cfg and cfg.webhook_activo %}checked{% endif %} id="waCheck">
-          <label for="waCheck" style="font-size:13px;color:var(--text-muted)">Activar webhook</label>
-        </div>
-        <button type="submit" class="btn btn-ghost">Guardar notificaciones</button>
-      </form>
-    </div>
-  </div>
-
-  <!-- Export alertas -->
-  <div class="config-card">
-    <div class="config-hdr">📤 Exportar mis alertas</div>
-    <div class="config-body" style="display:flex;flex-direction:column;gap:8px">
-      <p style="font-size:13px;color:var(--text-muted)">Descarga todas tus alertas históricas en CSV (hasta 5.000 registros).</p>
-      <a href="/alertas/export.csv" class="btn btn-ghost" style="text-align:center">⬇ Descargar alertas CSV</a>
-    </div>
-  </div>
-{% endblock %}
+{% block title %}Configuración{% endblock %}
+{% block topbar_title %}Configuración de cuenta{% endblock %}
 
 {% block extra_head %}
 <style>
-.config-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
-@media(max-width:760px){.config-grid{grid-template-columns:1fr}}
-.config-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
-.config-hdr{padding:14px 18px;background:var(--surface-2);border-bottom:1px solid var(--border);font-weight:700;display:flex;align-items:center;gap:8px}
-.config-body{padding:20px 18px}
-.form-field{margin-bottom:14px}
-.form-field label{display:block;font-size:11px;font-family:var(--font-mono);color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
-.form-field input{width:100%;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);border-radius:var(--radius);padding:9px 12px;font-size:13px;font-family:var(--font-ui);outline:none;transition:border-color .15s}
-.form-field input:focus{border-color:var(--accent)}
-.ticket-status{display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:var(--radius);margin-bottom:14px;font-size:13px}
-.ts-ok{background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.2);color:var(--accent-2)}
-.ts-none{background:rgba(248,81,73,.08);border:1px solid rgba(248,81,73,.2);color:#f85149}
-.stat-row{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border);font-size:13px}
-.stat-row:last-child{border-bottom:none}
-.stat-val{font-family:var(--font-mono);color:var(--accent);font-weight:600}
-.plan-row{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-top:1px solid var(--border)}
-.plan-name-big{font-size:18px;font-weight:800}
-.plan-free-c{color:var(--text-muted)}.plan-pro-c{color:var(--accent)}
-.hint{font-size:11px;color:var(--text-dim);margin-top:6px;line-height:1.5}
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  max-width: 1100px;
+}
+.config-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  min-width: 0;
+}
+.config-hdr {
+  padding: 14px 18px;
+  font-weight: 700;
+  font-size: 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-hover);
+}
+.config-body { padding: 18px; }
+.form-field { margin-bottom: 14px; }
+.form-field label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.form-field input,
+.form-field select {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  outline: none;
+}
+.form-field input:focus,
+.form-field select:focus { border-color: var(--primary); }
+.hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+.ticket-status {
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+.ts-ok { background: rgba(62,207,142,.12); color: var(--success); border: 1px solid rgba(62,207,142,.25); }
+.ts-none { background: rgba(239,91,91,.12); color: var(--danger); border: 1px solid rgba(239,91,91,.25); }
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.stat-row:last-child { border-bottom: none; }
+.stat-val { font-weight: 600; font-variant-numeric: tabular-nums; }
+.btn {
+  display: inline-block;
+  padding: 9px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  text-decoration: none !important;
+}
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.btn-ghost:hover { background: var(--bg-hover); }
+.quota-note {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+@media (max-width: 960px) {
+  .config-grid { grid-template-columns: 1fr; }
+}
 </style>
-
-  <!-- Notificaciones -->
-  <div class="config-card">
-    <div class="config-hdr">🔔 Notificaciones</div>
-    <div class="config-body">
-      <form method="POST" action="/configuracion/webhook">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="form-field">
-          <label>Modo de alerta</label>
-          <select name="notif_mode" style="width:100%;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);border-radius:var(--radius);padding:9px 12px;font-size:13px;outline:none">
-            <option value="digest" {% if not cfg or cfg.notif_mode=='digest' %}selected{% endif %}>📬 Digest diario (1 email/día con todas las alertas)</option>
-            <option value="realtime" {% if cfg and cfg.notif_mode=='realtime' %}selected{% endif %}>⚡ Tiempo real (email por cada alerta nueva)</option>
-          </select>
-          <div class="hint">El digest llega a las 8 AM con todas las coincidencias del día anterior.</div>
-        </div>
-        <div class="form-field">
-          <label>Webhook URL (opcional)</label>
-          <input type="url" name="webhook_url" value="{{ cfg.webhook_url or '' if cfg else '' }}"
-                 placeholder="https://hooks.slack.com/services/...">
-          <div class="hint">Recibirás un POST JSON por cada alerta nueva. Compatible con Slack, Teams, Zapier, n8n.</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
-          <input type="checkbox" name="webhook_activo" value="1"
-                 {% if cfg and cfg.webhook_activo %}checked{% endif %} id="waCheck">
-          <label for="waCheck" style="font-size:13px;color:var(--text-muted)">Activar webhook</label>
-        </div>
-        <button type="submit" class="btn btn-ghost">Guardar notificaciones</button>
-      </form>
-    </div>
-  </div>
-
-  <!-- Export alertas -->
-  <div class="config-card">
-    <div class="config-hdr">📤 Exportar mis alertas</div>
-    <div class="config-body" style="display:flex;flex-direction:column;gap:8px">
-      <p style="font-size:13px;color:var(--text-muted)">Descarga todas tus alertas históricas en CSV (hasta 5.000 registros).</p>
-      <a href="/alertas/export.csv" class="btn btn-ghost" style="text-align:center">⬇ Descargar alertas CSV</a>
-    </div>
-  </div>
 {% endblock %}
 
 {% block content %}
@@ -159,86 +121,54 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-field">
           <label>Nuevo ticket</label>
-          <input type="text" name="ticket" placeholder="Pega tu ticket de api.mercadopublico.cl" required>
+          <input type="text" name="ticket" placeholder="Pega tu ticket de api.mercadopublico.cl" required autocomplete="off">
         </div>
-        <p class="hint">Obtén tu ticket gratis en <strong>api.mercadopublico.cl</strong> → Mis APIs → ChileCompra Mercado Público. El ticket se valida en tiempo real y se almacena cifrado.</p>
+        <p class="hint">Obtén tu ticket gratis en <strong>api.mercadopublico.cl</strong> → Mis APIs → ChileCompra Mercado Público. Se valida al guardar y se almacena cifrado.</p>
         <div style="margin-top:14px">
           <button type="submit" class="btn btn-primary">Guardar y validar ticket</button>
         </div>
       </form>
+      <div class="quota-note">
+        El ticket tiene un límite de <strong>10.000 requests/día</strong>. Para uso normal suele ser suficiente.
+      </div>
     </div>
   </div>
 
-  <!-- Estadísticas -->
+  <!-- Cuenta -->
   <div class="config-card">
     <div class="config-hdr">📊 Tu cuenta</div>
     <div class="config-body">
-      <div class="stat-row"><span>Email</span><span class="stat-val" style="color:var(--text-muted);font-size:12px">{{ current_user.email }}</span></div>
-      <div class="stat-row"><span>Nombre</span><span class="stat-val" style="color:var(--text)">{{ current_user.nombre or '—' }}</span></div>
+      <div class="stat-row"><span>Email</span><span class="stat-val" style="color:var(--text-muted);font-size:12px;word-break:break-all">{{ current_user.email }}</span></div>
+      <div class="stat-row"><span>Nombre</span><span class="stat-val">{{ current_user.nombre or '—' }}</span></div>
       <div class="stat-row"><span>Reglas creadas</span><span class="stat-val">{{ stats.total_reglas }}</span></div>
       <div class="stat-row"><span>Alertas recibidas</span><span class="stat-val">{{ stats.total_alertas }}</span></div>
       <div class="stat-row"><span>Límite de reglas</span><span class="stat-val">{{ '∞' if current_user.es_pro else '3' }}</span></div>
-      <div class="stat-row"><span>Bid Analyzer</span><span class="stat-val">{{ '✅ Incluido' if current_user.es_pro else '🔒 Pro' }}</span></div>
-    </div>
-    <div class="plan-row">
-      <div>
-        <div style="font-size:11px;color:var(--text-dim);margin-bottom:2px">Plan actual</div>
-        <div class="plan-name-big {{ 'plan-pro-c' if current_user.es_pro else 'plan-free-c' }}">
-          {{ 'Pro ⭐' if current_user.es_pro else 'Free' }}
-        </div>
-      </div>
-      {% if not current_user.es_pro %}
-      <a href="/upgrade" class="btn btn-primary">↑ Mejorar a Pro</a>
-      {% else %}
-      <form method="POST" action="/upgrade/free" onsubmit="return confirm('¿Bajar a plan Free?')">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="btn btn-ghost btn-sm">Bajar a Free</button>
-      </form>
-      {% endif %}
+      <div class="stat-row"><span>Plan</span><span class="stat-val" style="color:var(--primary)">{{ current_user.plan|upper }}{% if current_user.es_pro %} · Pro{% endif %}</span></div>
     </div>
   </div>
 
-  <!-- Cambiar contraseña -->
+  <!-- Password -->
   <div class="config-card">
-    <div class="config-hdr">🔐 Cambiar contraseña</div>
+    <div class="config-hdr">🔒 Cambiar contraseña</div>
     <div class="config-body">
       <form method="POST" action="/configuracion/password">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-field">
           <label>Contraseña actual</label>
-          <input type="password" name="password_actual" required>
+          <input type="password" name="password_actual" required autocomplete="current-password">
         </div>
         <div class="form-field">
-          <label>Nueva contraseña (mín. 8 chars)</label>
-          <input type="password" name="password_nuevo" required minlength="8">
+          <label>Nueva contraseña</label>
+          <input type="password" name="password_nueva" required minlength="8" autocomplete="new-password">
         </div>
         <div class="form-field">
-          <label>Repetir nueva contraseña</label>
-          <input type="password" name="password_nuevo2" required>
+          <label>Confirmar nueva</label>
+          <input type="password" name="password_confirm" required minlength="8" autocomplete="new-password">
         </div>
-        <button type="submit" class="btn btn-ghost">Cambiar contraseña</button>
+        <button type="submit" class="btn btn-ghost">Actualizar contraseña</button>
       </form>
     </div>
   </div>
-
-  <!-- Info API -->
-  <div class="config-card">
-    <div class="config-hdr">ℹ️ Cómo obtener tu ticket</div>
-    <div class="config-body" style="font-size:13px;color:var(--text-muted);line-height:1.8">
-      <ol style="padding-left:16px">
-        <li>Ve a <strong><a href="https://api.mercadopublico.cl" target="_blank" class="link">api.mercadopublico.cl</a></strong></li>
-        <li>Inicia sesión con tu cuenta de ChileCompra</li>
-        <li>Ve a <strong>Mis APIs</strong> → <strong>Mercado Público</strong></li>
-        <li>Copia el <strong>Ticket de acceso</strong></li>
-        <li>Pégalo en el formulario de arriba</li>
-      </ol>
-      <div style="margin-top:14px;padding:10px;background:var(--surface-2);border-radius:var(--radius);font-size:11px">
-        El ticket tiene un límite de <strong>10.000 requests/día</strong>. Para uso normal esto es más que suficiente.
-      </div>
-    </div>
-  </div>
-
-</div>
 
   <!-- Notificaciones -->
   <div class="config-card">
@@ -248,34 +178,36 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-field">
           <label>Modo de alerta</label>
-          <select name="notif_mode" style="width:100%;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);border-radius:var(--radius);padding:9px 12px;font-size:13px;outline:none">
-            <option value="digest" {% if not cfg or cfg.notif_mode=='digest' %}selected{% endif %}>📬 Digest diario (1 email/día con todas las alertas)</option>
-            <option value="realtime" {% if cfg and cfg.notif_mode=='realtime' %}selected{% endif %}>⚡ Tiempo real (email por cada alerta nueva)</option>
+          <select name="notif_mode">
+            <option value="digest" {% if not cfg or cfg.notif_mode=='digest' %}selected{% endif %}>📬 Digest diario (1 email/día)</option>
+            <option value="realtime" {% if cfg and cfg.notif_mode=='realtime' %}selected{% endif %}>⚡ Tiempo real (email por alerta)</option>
           </select>
-          <div class="hint">El digest llega a las 8 AM con todas las coincidencias del día anterior.</div>
+          <div class="hint">El digest llega ~8 AM (America/Santiago) con las coincidencias del día anterior.</div>
         </div>
         <div class="form-field">
           <label>Webhook URL (opcional)</label>
           <input type="url" name="webhook_url" value="{{ cfg.webhook_url or '' if cfg else '' }}"
                  placeholder="https://hooks.slack.com/services/...">
-          <div class="hint">Recibirás un POST JSON por cada alerta nueva. Compatible con Slack, Teams, Zapier, n8n.</div>
+          <div class="hint">POST JSON por alerta. Compatible con Slack, Teams, Zapier, n8n. Requiere secreto HMAC configurado.</div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
-          <input type="checkbox" name="webhook_activo" value="1"
-                 {% if cfg and cfg.webhook_activo %}checked{% endif %} id="waCheck">
-          <label for="waCheck" style="font-size:13px;color:var(--text-muted)">Activar webhook</label>
+          <input type="checkbox" name="webhook_activo" value="1" id="waCheck"
+                 {% if cfg and cfg.webhook_activo %}checked{% endif %}>
+          <label for="waCheck" style="margin:0;font-size:13px;color:var(--text-muted);cursor:pointer">Activar webhook</label>
         </div>
         <button type="submit" class="btn btn-ghost">Guardar notificaciones</button>
       </form>
     </div>
   </div>
 
-  <!-- Export alertas -->
-  <div class="config-card">
+  <!-- Export -->
+  <div class="config-card" style="grid-column: 1 / -1">
     <div class="config-hdr">📤 Exportar mis alertas</div>
-    <div class="config-body" style="display:flex;flex-direction:column;gap:8px">
-      <p style="font-size:13px;color:var(--text-muted)">Descarga todas tus alertas históricas en CSV (hasta 5.000 registros).</p>
-      <a href="/alertas/export.csv" class="btn btn-ghost" style="text-align:center">⬇ Descargar alertas CSV</a>
+    <div class="config-body" style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px">
+      <p style="font-size:13px;color:var(--text-muted);margin:0;max-width:520px">Descarga tus alertas históricas en CSV (hasta 5.000 registros).</p>
+      <a href="/alertas/export.csv" class="btn btn-ghost">⬇ Descargar alertas CSV</a>
     </div>
   </div>
+
+</div>
 {% endblock %}
