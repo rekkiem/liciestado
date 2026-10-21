@@ -5,10 +5,19 @@ import pytest
 
 @pytest.fixture()
 def app():
-    os.environ.setdefault("DATABASE_URL", "sqlite://")
+    # Forzar sqlite: setdefault no pisa DATABASE_URL de la shell (PG real o URL falsa de otros tests)
+    os.environ["DATABASE_URL"] = "sqlite://"
+    os.environ.setdefault("APP_ENV", "development")
     os.environ.setdefault("SECRET_KEY", "test-secret-key-at-least-32-chars-long")
     os.environ.setdefault("DASHBOARD_PASS", "testpass-not-default")
     os.environ.setdefault("TICKET_MERCADO_PUBLICO", "TEST_TICKET_ONLY")
+    os.environ.setdefault(
+        "FERNET_KEY", "nxnwbct6-gajdCxxUTPWtgAdrdQhtErWQkERhrABPpg="
+    )
+    # Reiniciar settings/engine si quedaron cacheados con otra URL
+    for mod in ("config", "app.database", "app.crypto"):
+        if mod in __import__("sys").modules:
+            del __import__("sys").modules[mod]
     from app.database import init_db
     from app.dashboard import create_app
     init_db()
@@ -41,8 +50,11 @@ def user_client(app):
             db.add(u)
             db.commit()
     c = app.test_client()
-    # login
-    c.post("/login", data={"email": "smoke@test.com", "password": "pass12345"}, follow_redirects=True)
+    c.post(
+        "/login",
+        data={"email": "smoke@test.com", "password": "pass12345"},
+        follow_redirects=True,
+    )
     return c
 
 
