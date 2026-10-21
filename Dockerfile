@@ -3,7 +3,6 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /build
 
-# Instalar dependencias de compilación
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev && \
     rm -rf /var/lib/apt/lists/*
@@ -20,46 +19,41 @@ LABEL maintainer="tu@email.com"
 LABEL description="MP Alertas — Monitor de Mercado Público con alertas por email"
 LABEL version="1.0.0"
 
-# Variables de entorno de producción
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=5000 \
     DATABASE_URL=postgresql+psycopg://mp_user:mp_pass@db:5432/mp_alertas \
     TZ=America/Santiago
 
-# Runtime deps mínimas (para PostgreSQL si se usa)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 curl tzdata && \
     rm -rf /var/lib/apt/lists/*
 
-# Usuario sin privilegios
 RUN useradd -m -u 1001 appuser
 
-# Copiar paquetes desde el builder
 COPY --from=builder /install /usr/local
 
 WORKDIR /app
 
-# Copiar código fuente
 COPY --chown=appuser:appuser . .
 
-# Directorio para datos persistentes y logs
 RUN mkdir -p /data /app/logs && \
     chown -R appuser:appuser /data /app/logs
 
 USER appuser
 
-# Healthcheck: verifica que el dashboard responde
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f -u "${DASHBOARD_USER:-admin}:${DASHBOARD_PASS:-admin}" \
         http://localhost:${PORT:-5000}/ || exit 1
 
 EXPOSE ${PORT:-5000}
 
-# Entrypoint: wait PG + alembic upgrade + main.py
+# Entrypoint: normalizar CRLF (Windows checkout) + wait PG + alembic + main
 USER root
-RUN chmod +x /app/scripts/docker_entrypoint.sh
+RUN sed -i 's/\r$//' /app/scripts/docker_entrypoint.sh && \
+    chmod +x /app/scripts/docker_entrypoint.sh
 USER appuser
 
-ENTRYPOINT ["/app/scripts/docker_entrypoint.sh"]
+# Usar /bin/sh evita "no such file" cuando el shebang llega con \r
+ENTRYPOINT ["/bin/sh", "/app/scripts/docker_entrypoint.sh"]
 CMD []

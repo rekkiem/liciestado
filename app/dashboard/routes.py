@@ -493,18 +493,9 @@ def api_analytics_diario():
 @bp.route("/api/status")
 @login_required
 def api_status():
-    from app.scheduler import _scheduler
-    job = None
-    if _scheduler:
-        j = _scheduler.get_job("ciclo_diario")
-        job = str(j.next_run_time) if j and j.next_run_time else None
-    with get_db() as db:
-        n_lic = db.query(func.count(LicitacionSnapshot.id)).scalar() or 0
-        n_alertas = db.query(func.count(AlertaGenerada.id)).filter_by(user_id=_u()).scalar() or 0
-    return jsonify({
-        "ok": True, "licitaciones": n_lic, "alertas_usuario": n_alertas,
-        "proxima_ejecucion": job, "user_id": _u(),
-    })
+    """Obj6: estado real BD, outbox, sync, cuota global, scheduler."""
+    from app.dashboard.status_api import build_status_response
+    return build_status_response()
 
 
 @bp.route("/api/quota")

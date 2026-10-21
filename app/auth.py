@@ -106,12 +106,21 @@ def guardar_ticket(user_id: int, ticket_plano: str) -> UserTicket:
 
 
 def obtener_ticket_plano(user_id: int) -> Optional[str]:
-    """Obtiene y descifra el ticket activo del usuario. None si no tiene."""
+    """Obtiene y descifra el ticket activo. None si no hay o FERNET_KEY no coincide."""
     with get_db() as db:
         ut = db.query(UserTicket).filter_by(user_id=user_id, activo=True).first()
         if not ut:
             return None
-        return descifrar_ticket(ut.ticket_cifrado)
+        try:
+            return descifrar_ticket(ut.ticket_cifrado)
+        except ValueError:
+            # Ticket cifrado con otra FERNET_KEY — no tumbar el dashboard
+            logger.warning(
+                "Ticket user_id=%s ilegible (FERNET_KEY distinta o inválida). "
+                "Fija FERNET_KEY en .env y vuelve a guardar el ticket en Configuración.",
+                user_id,
+            )
+            return None
 
 
 def validar_ticket_api(ticket: str) -> tuple[bool, str]:

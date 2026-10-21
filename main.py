@@ -54,7 +54,9 @@ def run_server():
 
     from app.webhook_service import iniciar_worker_webhook
     iniciar_worker_webhook()
-    logger.info("Worker de webhooks iniciado.")
+    logger.info("Worker de webhooks/outbox iniciado.")
+    from app.outbox import iniciar_worker_outbox
+    iniciar_worker_outbox()
 
     from app.scheduler import iniciar_scheduler
     iniciar_scheduler()

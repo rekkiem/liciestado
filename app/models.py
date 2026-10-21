@@ -1,16 +1,5 @@
 """
 app/models.py — Modelos ORM multi-tenant.
-
-Tablas nuevas:
-  users           → usuarios del SaaS
-  user_tickets    → tickets de API de Mercado Público por usuario (cifrados)
-
-Tablas modificadas:
-  reglas_usuario  → agrega user_id (FK users.id)
-  alertas_generadas → agrega user_id
-
-Tablas compartidas (caché pública):
-  licitaciones_snapshot → sin user_id (datos públicos de la API)
 """
 from __future__ import annotations
 from datetime import datetime, timezone
@@ -18,7 +7,7 @@ from typing import Optional
 
 from flask_login import UserMixin
 from sqlalchemy import (
-    Boolean, DateTime, ForeignKey, Integer, JSON,
+    Boolean, DateTime, ForeignKey, Index, Integer, JSON, Numeric,
     String, Text, UniqueConstraint, func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship, backref
@@ -59,9 +48,6 @@ class User(UserMixin, Base):
 
     @property
     def es_pro(self) -> bool:
-        """Pro permanente o trial activo (trial_pro_hasta en UserConfig).
-        Usa solo datos ya cargados (joinedload en user_loader); no abre sesión.
-        """
         if self.plan in ("pro", "enterprise"):
             return True
         cfg = self.__dict__.get("config", None)
@@ -142,7 +128,6 @@ class AlertaGenerada(Base):
     regla_id:         Mapped[int]  = mapped_column(Integer,
                           ForeignKey("reglas_usuario.id", ondelete="CASCADE"), nullable=False)
     entidad_id:       Mapped[str]  = mapped_column(String(150), nullable=False, index=True)
-    # Compat BD antigua: columna NOT NULL residual; siempre rellenar desde la regla
     tipo_entidad:     Mapped[str]  = mapped_column(String(50), nullable=False, default="licitacion")
     datos_resumen:    Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     fecha_alerta:     Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
@@ -168,13 +153,15 @@ class LicitacionSnapshot(Base):
     region:              Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     monto_clp:           Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     fecha_sincronizacion: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+    detalle_obtenido_en: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    enrich_attempts:     Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_enrich_error:   Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     def __repr__(self) -> str:
         return f"<LicitacionSnapshot codigo='{self.codigo}'>"
 
 
 class UserConfig(Base):
-    """Configuración de notificaciones y preferencias por usuario."""
     __tablename__ = "user_configs"
 
     id:              Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -186,6 +173,7 @@ class UserConfig(Base):
     webhook_activo:  Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     trial_pro_hasta: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     notif_dashboard: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    webhook_secret:  Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     user: Mapped["User"] = relationship("User", backref=backref("config", uselist=False))
 
@@ -226,3 +214,187 @@ class ApiQuotaLog(Base):
 
     def __repr__(self) -> str:
         return f"<ApiQuotaLog user={self.user_id} fecha={self.fecha} req={self.requests}>"
+
+
+class NotificationOutbox(Base):
+    """Cola durable (email/webhook). Estados: pendiente|procesando|enviado|fallido."""
+    __tablename__ = "notification_outbox"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    alerta_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    canal: Mapped[str] = mapped_column(String(20), nullable=False)
+    destino: Mapped[str] = mapped_column(String(512), nullable=False)
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    estado: Mapped[str] = mapped_column(String(20), nullable=False, default="pendiente")
+    intentos: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_intentos: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    next_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    locked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    locked_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    enviado_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_outbox_idempotency"),
+        Index("ix_outbox_claim", "estado", "next_retry_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Outbox {self.id} {self.canal} {self.estado} key={self.idempotency_key[:16]}>"
+
+
+class SyncRun(Base):
+    """Corrida de sync/enrich por día (Obj4). estado: completo|incompleto|error."""
+    __tablename__ = "sync_runs"
+    __table_args__ = (
+        Index("ix_sync_runs_kind_fecha", "kind", "fecha"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    fecha: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    estado: Mapped[str] = mapped_column(String(20), nullable=False, default="completo")
+    motivo: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    items_ok: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    items_fail: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<SyncRun {self.kind} {self.fecha} {self.estado}>"
+
+
+class ApiQuotaDaily(Base):
+    """Cuota global diaria del ticket (Obj4). Persistida; no solo RAM."""
+    __tablename__ = "api_quota_daily"
+
+    fecha: Mapped[str] = mapped_column(String(10), primary_key=True)
+    requests: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    limite: Mapped[int] = mapped_column(Integer, nullable=False, default=10_000)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<ApiQuotaDaily {self.fecha} {self.requests}/{self.limite}>"
+
+
+# ─── Obj5: modelo relacional (snapshot JSON sigue vigente) ───────────────────
+
+class Organismo(Base):
+    __tablename__ = "organismos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    codigo: Mapped[str] = mapped_column(String(40), unique=True, nullable=False, index=True)
+    nombre: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    region: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<Organismo codigo={self.codigo!r}>"
+
+
+class Licitacion(Base):
+    __tablename__ = "licitaciones"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    codigo: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    tipo: Mapped[str] = mapped_column(String(30), nullable=False, default="licitacion")
+    titulo: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    estado: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    fecha_publicacion: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    fecha_cierre: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    monto_clp: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    organismo_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("organismos.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    link_detalle: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    def __repr__(self) -> str:
+        return f"<Licitacion codigo={self.codigo!r}>"
+
+
+class LicitacionVersion(Base):
+    __tablename__ = "licitacion_versiones"
+    __table_args__ = (
+        UniqueConstraint("licitacion_id", "content_hash", name="uq_lic_version_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    licitacion_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("licitaciones.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+
+
+class Item(Base):
+    __tablename__ = "items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    licitacion_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("licitaciones.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    codigo_item: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    descripcion: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cantidad: Mapped[Optional[float]] = mapped_column(Numeric(18, 4), nullable=True)
+    unidad: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    monto_unitario: Mapped[Optional[float]] = mapped_column(Numeric(18, 2), nullable=True)
+
+
+class Proveedor(Base):
+    __tablename__ = "proveedores"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    rut: Mapped[str] = mapped_column(String(12), unique=True, nullable=False, index=True)
+    nombre: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<Proveedor rut={self.rut!r}>"
+
+
+class Adjudicacion(Base):
+    __tablename__ = "adjudicaciones"
+    __table_args__ = (
+        Index("ix_adj_lic_prov", "licitacion_id", "proveedor_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    licitacion_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("licitaciones.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    proveedor_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("proveedores.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    monto: Mapped[Optional[float]] = mapped_column(Numeric(18, 2), nullable=True)
+    fecha: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+# ─── Obj6: gold set (anotación humana; PDFs los aporta Rafa) ─────────────────
+
+class GoldBase(Base):
+    """Ficha de anotación para evaluación de extracción de bases PDF."""
+    __tablename__ = "gold_bases"
+    __table_args__ = (
+        UniqueConstraint("codigo", "vertical", name="uq_gold_codigo_vertical"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    codigo: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    vertical: Mapped[str] = mapped_column(String(30), nullable=False)  # TI | Construccion
+    titulo: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    pdf_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    # anotacion: requisitos_obligatorios, plazos, garantias, criterios, documentos_exigidos
+    anotacion: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    notas: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    def __repr__(self) -> str:
+        return f"<GoldBase {self.codigo} {self.vertical}>"

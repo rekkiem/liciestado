@@ -3,11 +3,9 @@ import os
 import sys
 from pathlib import Path
 
-# Ensure project root on path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-# Stub pydantic_settings if missing (sandbox CI sin el paquete; prod lo tiene en requirements)
 try:
     import pydantic_settings  # noqa: F401
 except ImportError:  # pragma: no cover
@@ -27,12 +25,13 @@ except ImportError:  # pragma: no cover
     mod.BaseSettings = _BaseSettings
     sys.modules["pydantic_settings"] = mod
 
-# Safe test env (no real secrets)
+# Safe test env (no real secrets / no cuota real de disco)
 os.environ.setdefault("DATABASE_URL", "sqlite://")
+os.environ["API_QUOTA_PERSIST"] = "0"  # Obj4: no leer/escribir ApiQuotaDaily en unit tests
 os.environ.setdefault("TICKET_MERCADO_PUBLICO", "TEST_TICKET_ONLY")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-at-least-32-chars-long")
 os.environ.setdefault("DASHBOARD_PASS", "testpass-not-default")
-os.environ.setdefault("FERNET_KEY", "")  # let crypto generate for tests
+os.environ.setdefault("FERNET_KEY", "")
 os.environ.setdefault("SMTP_HOST", "localhost")
 os.environ.setdefault("SMTP_PORT", "1025")
 os.environ.setdefault("SMTP_USER", "test@test.cl")

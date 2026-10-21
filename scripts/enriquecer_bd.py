@@ -1,22 +1,8 @@
 #!/usr/bin/env python3
 """
 scripts/enriquecer_bd.py
-Enriquece los snapshots existentes que solo tienen datos del listado
-(sin región, monto, organismo) llamando al endpoint de detalle por cada código.
-
-Diseño Fase 1 / Objetivo 1:
-  - Ritmo suave (API_ENRICH_RATE_PER_SECOND, default 2 req/s)
-  - Lotes de 50 (configurable)
-  - Respeta 429 / Retry-After / circuit breaker del cliente
-  - Marca corrida como incompleta si se corta por cuota o rate limit
-  - Preferir ventana valle 22:00–07:00 America/Santiago
-
-Uso:
-  python scripts/enriquecer_bd.py                  # lote de 50 (default)
-  python scripts/enriquecer_bd.py --limite 30
-  python scripts/enriquecer_bd.py --todos          # todos los pendientes (explícito)
-  python scripts/enriquecer_bd.py --force          # permite >50 fuera de ventana valle
-  python scripts/enriquecer_bd.py --dry-run
+Enriquece snapshots sin región/monto con detalle API.
+Obj4: enrich_attempts con tope, sync_run incompleto al cortar por 429/cuota.
 """
 from __future__ import annotations
 
@@ -25,7 +11,7 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -41,6 +27,7 @@ logger = logging.getLogger("enriquecer")
 
 from app.database import init_db, get_db
 from app.models import LicitacionSnapshot
+from app.sync_state import start_sync_run, finish_sync_run, fecha_cl_hoy
 from app.api_client import (
     make_enrich_client,
     QuotaExhaustedException,
@@ -59,8 +46,8 @@ B = "\033[1m"
 NC = "\033[0m"
 
 TZ_CL = ZoneInfo("America/Santiago")
-VALLE_INICIO = 22  # 22:00
-VALLE_FIN = 7      # 07:00
+VALLE_INICIO = 22
+VALLE_FIN = 7
 
 
 def _en_ventana_valle(now: datetime | None = None) -> bool:
@@ -86,11 +73,13 @@ def run(
     init_db()
     client = make_enrich_client()
     rate = getattr(settings, "API_ENRICH_RATE_PER_SECOND", 2.0)
+    max_attempts = int(getattr(settings, "MAX_ENRICH_ATTEMPTS", 5))
 
     with get_db() as db:
         q = db.query(LicitacionSnapshot)
         if solo_sin_region:
             q = q.filter(LicitacionSnapshot.region.is_(None))
+        q = q.filter(LicitacionSnapshot.enrich_attempts < max_attempts)
         total_pendiente = q.count()
         pendientes = q.limit(limite).all() if limite is not None else q.all()
         codigos = [(s.id, s.codigo, s.tipo) for s in pendientes]
@@ -134,6 +123,7 @@ def run(
     ok = err = omit = 0
     incompleto = False
     motivo_corte = ""
+    run_id = start_sync_run("enrich", fecha_cl_hoy())
 
     for i, (snap_id, codigo, tipo) in enumerate(codigos, 1):
         try:
@@ -141,6 +131,14 @@ def run(
                 detalle = client.get_licitacion_detalle(codigo)
                 if not detalle:
                     omit += 1
+                    with get_db() as db:
+                        db.query(LicitacionSnapshot).filter_by(id=snap_id).update(
+                            {
+                                "enrich_attempts": LicitacionSnapshot.enrich_attempts + 1,
+                                "last_enrich_error": "detalle_vacio",
+                            },
+                            synchronize_session=False,
+                        )
                     continue
                 norm = normalizar_licitacion(detalle)
             else:
@@ -148,6 +146,14 @@ def run(
                 listado = data.get("Listado") or []
                 if not listado:
                     omit += 1
+                    with get_db() as db:
+                        db.query(LicitacionSnapshot).filter_by(id=snap_id).update(
+                            {
+                                "enrich_attempts": LicitacionSnapshot.enrich_attempts + 1,
+                                "last_enrich_error": "listado_vacio",
+                            },
+                            synchronize_session=False,
+                        )
                     continue
                 norm = normalizar_orden_compra(listado[0])
 
@@ -158,6 +164,7 @@ def run(
                 except Exception:
                     pass
 
+            now_u = datetime.now(timezone.utc).replace(tzinfo=None)
             with get_db() as db:
                 db.query(LicitacionSnapshot).filter_by(id=snap_id).update(
                     {
@@ -166,7 +173,11 @@ def run(
                         "monto_clp": norm.get("monto_clp"),
                         "estado": norm.get("estado"),
                         "fecha_publicacion": fp,
-                    }
+                        "detalle_obtenido_en": now_u,
+                        "enrich_attempts": LicitacionSnapshot.enrich_attempts + 1,
+                        "last_enrich_error": None,
+                    },
+                    synchronize_session=False,
                 )
             ok += 1
 
@@ -183,23 +194,37 @@ def run(
             break
         except ApiClientException as e:
             err += 1
+            with get_db() as db:
+                db.query(LicitacionSnapshot).filter_by(id=snap_id).update(
+                    {
+                        "enrich_attempts": LicitacionSnapshot.enrich_attempts + 1,
+                        "last_enrich_error": redact_secrets(str(e))[:400],
+                    },
+                    synchronize_session=False,
+                )
             if err <= 5:
                 print(f"  {R}Error API {codigo}: {redact_secrets(str(e))}{NC}")
         except Exception as e:
             err += 1
+            with get_db() as db:
+                db.query(LicitacionSnapshot).filter_by(id=snap_id).update(
+                    {
+                        "enrich_attempts": LicitacionSnapshot.enrich_attempts + 1,
+                        "last_enrich_error": redact_secrets(str(e))[:400],
+                    },
+                    synchronize_session=False,
+                )
             if err <= 5:
                 print(f"  {R}Error {codigo}: {redact_secrets(str(e))}{NC}")
 
-        # Progreso cada lote o al final
         if i % lote == 0 or i == len(codigos):
             pct = i / len(codigos) * 100
-            bar = "█" * int(pct / 2.5) + "░" * (40 - int(pct / 2.5))
+            bar = "\u2588" * int(pct / 2.5) + "\u2591" * (40 - int(pct / 2.5))
             print(
-                f"\r  [{bar}] {i:,}/{len(codigos):,} ({pct:.0f}%) ✅{ok} ❌{err} ⏭{omit}",
+                f"\r  [{bar}] {i:,}/{len(codigos):,} ({pct:.0f}%) \u2705{ok} \u274c{err} \u23ed{omit}",
                 end="",
                 flush=True,
             )
-            # Pausa breve entre lotes para suavizar aún más
             if i < len(codigos) and not incompleto:
                 time.sleep(0.5)
 
@@ -208,7 +233,7 @@ def run(
     status_txt = "INCOMPLETO" if incompleto else "COMPLETO"
     print(
         f"\n  {status_color}Estado: {status_txt}{NC}  "
-        f"{G}✅ Enriquecidos: {ok:,}{NC}  ❌ Errores: {err}  ⏭ Omitidos: {omit}"
+        f"{G}\u2705 Enriquecidos: {ok:,}{NC}  \u274c Errores: {err}  \u23ed Omitidos: {omit}"
     )
     if incompleto and motivo_corte:
         print(f"  Motivo corte: {motivo_corte}")
@@ -221,45 +246,25 @@ def run(
         )
     print(f"  Quedan sin región: {sin_region:,}\n")
 
+    finish_sync_run(
+        run_id,
+        estado="incompleto" if incompleto else "completo",
+        motivo=motivo_corte or None,
+        items_ok=ok,
+        items_fail=err,
+    )
     return 2 if incompleto else 0
 
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Enriquecer snapshots con detalle API")
-    p.add_argument(
-        "--limite",
-        type=int,
-        default=50,
-        help="Máx a procesar (default 50). Usar --todos para sin tope.",
-    )
-    p.add_argument(
-        "--todos",
-        action="store_true",
-        help="Procesar todos los pendientes (equivalente a --limite omitido)",
-    )
-    p.add_argument(
-        "--force",
-        action="store_true",
-        help="Permitir >50 ítems fuera de ventana valle 22:00–07:00 CL",
-    )
+    p.add_argument("--limite", type=int, default=50, help="Máx a procesar (default 50)")
+    p.add_argument("--todos", action="store_true", help="Procesar todos los pendientes")
+    p.add_argument("--force", action="store_true", help="Permitir >50 fuera de ventana valle")
     p.add_argument("--dry-run", action="store_true")
-    p.add_argument(
-        "--lote",
-        type=int,
-        default=50,
-        help="Tamaño de lote para progreso y pausa suave (default 50)",
-    )
-    p.add_argument(
-        "--solo-sin-region",
-        action="store_true",
-        default=True,
-        help="Solo procesar snapshots sin región (default: True)",
-    )
-    p.add_argument(
-        "--incluir-con-region",
-        action="store_true",
-        help="Procesar también los que ya tienen región",
-    )
+    p.add_argument("--lote", type=int, default=50)
+    p.add_argument("--solo-sin-region", action="store_true", default=True)
+    p.add_argument("--incluir-con-region", action="store_true")
     args = p.parse_args()
     solo = not args.incluir_con_region
     limite = None if args.todos else args.limite
