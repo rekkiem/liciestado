@@ -1,64 +1,73 @@
 """
 app/crypto.py — Cifrado simétrico con Fernet para secretos por usuario.
 
-La clave maestra viene de FERNET_KEY (vía config/settings → .env).
+La clave maestra viene de FERNET_KEY (vía env / config → .env).
 Debe ser el string url-safe base64 de 44 caracteres que genera Fernet.generate_key().decode().
 
 Comportamiento:
-  - Producción (APP_ENV=production o DATABASE_URL postgres*): sin clave válida → no arranca.
-  - Desarrollo: clave temporal con aviso fuerte; no se debe persistir tickets con ella
-    sin haber fijado FERNET_KEY (ver cifrar_ticket).
+  - Producción (APP_ENV=production|staging o DATABASE_URL postgres*): sin clave válida → no arranca.
+  - Desarrollo: clave temporal con aviso fuerte.
 """
 from __future__ import annotations
 
 import logging
 import os
-import sys
 
 from cryptography.fernet import Fernet, InvalidToken
 
 logger = logging.getLogger(__name__)
 
-# True si la clave en uso fue generada en memoria (no persistida en .env)
 _EPHEMERAL_KEY = False
 
 
-def _is_production_like() -> bool:
-    app_env = (os.environ.get("APP_ENV") or "").strip().lower()
-    if app_env in {"production", "prod", "staging"}:
-        return True
+def _env_first(*names: str) -> str:
+    """Lee os.environ primero (tests/monkeypatch), luego settings."""
+    for name in names:
+        raw = (os.environ.get(name) or "").strip()
+        if raw:
+            return raw
     try:
         from config import settings
 
-        env = (getattr(settings, "APP_ENV", None) or "").strip().lower()
-        if env in {"production", "prod", "staging"}:
-            return True
-        db = (settings.DATABASE_URL or "").lower()
-        if db.startswith("postgresql") or db.startswith("postgres"):
-            return True
-    except Exception:
-        db = (os.environ.get("DATABASE_URL") or "").lower()
-        if db.startswith("postgresql") or db.startswith("postgres"):
-            return True
-    return False
+        for name in names:
+            raw = (getattr(settings, name, None) or "").strip()
+            if raw:
+                return raw
+    except Exception as e:
+        logger.debug("settings no disponible: %s", e)
+    return ""
+
+
+def _is_production_like() -> bool:
+    app_env = _env_first("APP_ENV").lower()
+    if app_env in {"production", "prod", "staging"}:
+        return True
+    db = _env_first("DATABASE_URL").lower()
+    return db.startswith("postgresql") or db.startswith("postgres")
+
+
+def _sanitize_fernet_raw(raw: str) -> str:
+    """Descarta placeholders y valores no-ASCII (p.ej. el carácter … pegado por error)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    if raw in {"…", "...", "CHANGEME", "changeme", "your-key-here", "<FERNET_KEY>"}:
+        return ""
+    try:
+        raw.encode("ascii")
+    except UnicodeEncodeError:
+        logger.warning("FERNET_KEY contiene caracteres no-ASCII; se ignora.")
+        return ""
+    return raw
 
 
 def _resolve_fernet_key_raw() -> str:
-    """Prioridad: settings (pydantic lee .env) → os.environ."""
-    try:
-        from config import settings
-
-        raw = (settings.FERNET_KEY or "").strip()
-        if raw:
-            return raw
-    except Exception as e:
-        logger.debug("settings.FERNET_KEY no disponible: %s", e)
-    return (os.environ.get("FERNET_KEY") or "").strip()
+    return _sanitize_fernet_raw(_env_first("FERNET_KEY"))
 
 
 def _validate_key_bytes(raw: str) -> bytes:
     key_bytes = raw.encode("ascii")
-    Fernet(key_bytes)  # raises if invalid
+    Fernet(key_bytes)
     return key_bytes
 
 
@@ -110,17 +119,14 @@ _fernet = Fernet(_get_or_create_key())
 
 
 def is_ephemeral_key() -> bool:
-    """True si la clave actual no proviene de FERNET_KEY persistida."""
     return _EPHEMERAL_KEY
 
 
 def cifrar(texto: str) -> str:
-    """Cifra un string y retorna el token como string base64-url."""
     return _fernet.encrypt(texto.encode("utf-8")).decode("ascii")
 
 
 def descifrar(token: str) -> str:
-    """Descifra un token. Lanza ValueError si el token es inválido."""
     try:
         return _fernet.decrypt(token.encode("ascii")).decode("utf-8")
     except InvalidToken as e:
@@ -128,10 +134,6 @@ def descifrar(token: str) -> str:
 
 
 def cifrar_ticket(texto: str) -> str:
-    """
-    Cifra ticket. En desarrollo, si la clave es efímera, avisa fuerte
-    (el ticket no sobrevivirá un reinicio).
-    """
     if _EPHEMERAL_KEY:
         logger.error(
             "Guardando ticket con FERNET_KEY temporal: se perderá al reiniciar. "
