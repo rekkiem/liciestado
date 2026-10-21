@@ -25,13 +25,19 @@ except ImportError:  # pragma: no cover
     mod.BaseSettings = _BaseSettings
     sys.modules["pydantic_settings"] = mod
 
-# Safe test env (no real secrets / no cuota real de disco)
+# Sanear FERNET_KEY si quedó el placeholder "…" o caracteres no-ASCII
+_fk = (os.environ.get("FERNET_KEY") or "").strip()
+if not _fk or _fk in {"…", "...", "CHANGEME"} or any(ord(c) > 127 for c in _fk):
+    os.environ["FERNET_KEY"] = "nxnwbct6-gajdCxxUTPWtgAdrdQhtErWQkERhrABPpg="
+
+# Defaults de test (no pisan DATABASE_URL si el operador/CI ya la fijó)
 os.environ.setdefault("DATABASE_URL", "sqlite://")
-os.environ["API_QUOTA_PERSIST"] = "0"  # Obj4: no leer/escribir ApiQuotaDaily en unit tests
+os.environ.setdefault("APP_ENV", "development")
+os.environ["API_QUOTA_PERSIST"] = "0"
 os.environ.setdefault("TICKET_MERCADO_PUBLICO", "TEST_TICKET_ONLY")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-at-least-32-chars-long")
 os.environ.setdefault("DASHBOARD_PASS", "testpass-not-default")
-os.environ.setdefault("FERNET_KEY", "")
+os.environ.setdefault("FERNET_KEY", "nxnwbct6-gajdCxxUTPWtgAdrdQhtErWQkERhrABPpg=")
 os.environ.setdefault("SMTP_HOST", "localhost")
 os.environ.setdefault("SMTP_PORT", "1025")
 os.environ.setdefault("SMTP_USER", "test@test.cl")

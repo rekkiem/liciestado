@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "cambia-esto-en-produccion"
 
     FERNET_KEY: str = ""
+    APP_ENV: str = "development"  # development | production | staging
 
     ADMIN_EMAIL: Optional[str] = None
     SCHEDULER_HOUR: int = 6
