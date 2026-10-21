@@ -10,9 +10,13 @@ from sqlalchemy import (
     Boolean, DateTime, ForeignKey, Index, Integer, JSON, Numeric,
     String, Text, UniqueConstraint, func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship, backref
 
 from app.database import Base
+
+# JSON portable: JSON en SQLite, JSONB en Postgres (alineado con migraciones 005/006)
+JSONType = JSON().with_variant(JSONB(astext_type=Text()), "postgresql")
 
 
 def _now() -> datetime:
@@ -287,9 +291,13 @@ class ApiQuotaDaily(Base):
 
 class Organismo(Base):
     __tablename__ = "organismos"
+    __table_args__ = (
+        UniqueConstraint("codigo", name="uq_organismos_codigo"),
+        Index("ix_organismos_codigo", "codigo", unique=True),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    codigo: Mapped[str] = mapped_column(String(40), unique=True, nullable=False, index=True)
+    codigo: Mapped[str] = mapped_column(String(40), nullable=False)
     nombre: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     region: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
@@ -299,21 +307,30 @@ class Organismo(Base):
 
 class Licitacion(Base):
     __tablename__ = "licitaciones"
+    __table_args__ = (
+        UniqueConstraint("codigo", name="uq_licitaciones_codigo"),
+        Index("ix_licitaciones_codigo", "codigo", unique=True),
+        Index("ix_licitaciones_fecha_publicacion", "fecha_publicacion"),
+        Index("ix_licitaciones_content_hash", "content_hash"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    codigo: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    codigo: Mapped[str] = mapped_column(String(50), nullable=False)
     tipo: Mapped[str] = mapped_column(String(30), nullable=False, default="licitacion")
     titulo: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     estado: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
-    fecha_publicacion: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    fecha_publicacion: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     fecha_cierre: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     monto_clp: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     organismo_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("organismos.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     link_detalle: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+    # nullable=True alinea con migración 005 (no reescribir migraciones ya aplicadas)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, default=_now, onupdate=_now, nullable=True
+    )
 
     def __repr__(self) -> str:
         return f"<Licitacion codigo={self.codigo!r}>"
@@ -330,7 +347,7 @@ class LicitacionVersion(Base):
         Integer, ForeignKey("licitaciones.id", ondelete="CASCADE"), nullable=False, index=True
     )
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    payload: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
     captured_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
 
@@ -350,9 +367,13 @@ class Item(Base):
 
 class Proveedor(Base):
     __tablename__ = "proveedores"
+    __table_args__ = (
+        UniqueConstraint("rut", name="uq_proveedores_rut"),
+        Index("ix_proveedores_rut", "rut", unique=True),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    rut: Mapped[str] = mapped_column(String(12), unique=True, nullable=False, index=True)
+    rut: Mapped[str] = mapped_column(String(12), nullable=False)
     nombre: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     def __repr__(self) -> str:
@@ -391,10 +412,13 @@ class GoldBase(Base):
     titulo: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     pdf_path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     # anotacion: requisitos_obligatorios, plazos, garantias, criterios, documentos_exigidos
-    anotacion: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    anotacion: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
     notas: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+    # nullable=True alinea con migración 006
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, default=_now, onupdate=_now, nullable=True
+    )
 
     def __repr__(self) -> str:
         return f"<GoldBase {self.codigo} {self.vertical}>"
